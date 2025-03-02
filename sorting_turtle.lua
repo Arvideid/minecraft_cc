@@ -380,22 +380,24 @@ function sortingTurtle.analyzeSurroundings()
             distance = distance or 1
         }
         
-        -- Only proceed with categorization if we have a valid block name
-        if info.name ~= "unknown" then
-            -- Check for storage blocks
-            if info.name:find("barrel") or info.name:find("storage") then
-                table.insert(findings.barrels, info)
-            elseif info.name:find("chest") then
-                table.insert(findings.chests, info)
-            elseif info.name ~= "minecraft:air" then
-                table.insert(findings.obstacles, info)
-            end
-            
-            -- Check for special blocks
-            if info.name:find("diamond") or info.name:find("chest") or
-               info.name:find("furnace") or info.name:find("crafting") then
-                table.insert(findings.interesting, info)
-            end
+        -- Skip processing if we don't have a valid name
+        if not info.name or info.name == "unknown" then
+            return
+        end
+        
+        -- Check for storage blocks
+        if string.find(info.name, "barrel") or string.find(info.name, "storage") then
+            table.insert(findings.barrels, info)
+        elseif string.find(info.name, "chest") then
+            table.insert(findings.chests, info)
+        elseif info.name ~= "minecraft:air" then
+            table.insert(findings.obstacles, info)
+        end
+        
+        -- Check for special blocks
+        if string.find(info.name, "diamond") or string.find(info.name, "chest") or
+           string.find(info.name, "furnace") or string.find(info.name, "crafting") then
+            table.insert(findings.interesting, info)
         end
     end
     
