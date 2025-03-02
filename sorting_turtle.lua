@@ -508,11 +508,10 @@ end
 -- Function to move to a specific barrel position
 function sortingTurtle.moveToBarrel(barrelNumber)
     -- Turn left to face the barrels if not already facing them
-    if sortingTurtle.position.facing ~= 3 then  -- 3 is west (left)
-        while sortingTurtle.position.facing ~= 3 do
-            turtle.turnLeft()
-            sortingTurtle.updatePosition("turnLeft")
-        end
+    while sortingTurtle.position.facing ~= 3 do  -- 3 is west (left)
+        turtle.turnLeft()
+        sortingTurtle.addToHistory("turnLeft")
+        sortingTurtle.updatePosition("turnLeft")
     end
     
     -- Move forward one step to be in line with barrels
@@ -520,6 +519,7 @@ function sortingTurtle.moveToBarrel(barrelNumber)
         print("Cannot move forward to barrel line!")
         return false
     end
+    sortingTurtle.addToHistory("forward")
     sortingTurtle.updatePosition("forward")
     
     -- Move to position in front of the target barrel
@@ -528,17 +528,17 @@ function sortingTurtle.moveToBarrel(barrelNumber)
     
     while currentStep < stepsNeeded do
         if turtle.forward() then
+            sortingTurtle.addToHistory("forward")
             sortingTurtle.updatePosition("forward")
             currentStep = currentStep + 1
         else
-            -- If movement is blocked, try to return to chest
-            sortingTurtle.returnToChest()
             return false
         end
     end
 
     -- Turn right to face the barrel
     turtle.turnRight()
+    sortingTurtle.addToHistory("turnRight")
     sortingTurtle.updatePosition("turnRight")
     
     return true
@@ -817,19 +817,22 @@ function sortingTurtle.sortItems()
                         end
                     else
                         -- If we couldn't reach the barrel, drop item back in storage
-                        turtle.drop()
-                        itemsSkipped = itemsSkipped + 1
                         print("Could not reach barrel, returning item to storage")
+                        itemsSkipped = itemsSkipped + 1
                     end
                 else
                     -- Return item to storage if no suitable barrel or unknown category
-                    turtle.drop()
-                    itemsSkipped = itemsSkipped + 1
                     print("No suitable barrel found, returning item to storage")
+                    itemsSkipped = itemsSkipped + 1
                 end
                 
-                -- Return to initial position after processing each item
+                -- Return to initial position using movement history
                 sortingTurtle.returnToInitial()
+                
+                -- Drop item back in storage if it wasn't stored
+                if not itemsMoved then
+                    turtle.drop()
+                end
             end
             
             -- Check if there are more items to process
