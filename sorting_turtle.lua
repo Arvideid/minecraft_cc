@@ -371,26 +371,31 @@ function sortingTurtle.analyzeSurroundings()
     
     -- Helper function to categorize a block
     local function categorizeBlock(block, direction, distance)
-        if not block or not block.name then return end  -- Add nil check for block and block.name
+        if not block then return end  -- Early return if block is nil
         
+        -- Create info table with safe access to block properties
         local info = {
-            name = block.name,
-            direction = direction,
+            name = block.name or "unknown",
+            direction = direction or "unknown",
             distance = distance or 1
         }
         
-        if block.name:find("barrel") or block.name:find("storage") then
-            table.insert(findings.barrels, info)
-        elseif block.name:find("chest") then
-            table.insert(findings.chests, info)
-        elseif block.name ~= "minecraft:air" then
-            table.insert(findings.obstacles, info)
-        end
-        
-        -- Add any special blocks you want to track
-        if block.name:find("diamond") or block.name:find("chest") or
-           block.name:find("furnace") or block.name:find("crafting") then
-            table.insert(findings.interesting, info)
+        -- Only proceed with categorization if we have a valid block name
+        if info.name ~= "unknown" then
+            -- Check for storage blocks
+            if info.name:find("barrel") or info.name:find("storage") then
+                table.insert(findings.barrels, info)
+            elseif info.name:find("chest") then
+                table.insert(findings.chests, info)
+            elseif info.name ~= "minecraft:air" then
+                table.insert(findings.obstacles, info)
+            end
+            
+            -- Check for special blocks
+            if info.name:find("diamond") or info.name:find("chest") or
+               info.name:find("furnace") or info.name:find("crafting") then
+                table.insert(findings.interesting, info)
+            end
         end
     end
     
