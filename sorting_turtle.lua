@@ -81,39 +81,68 @@ end
 
 -- Function to get items from a barrel
 local function getBarrelItems()
-    local success, data = turtle.inspect()
-    if success and data.name == "minecraft:barrel" then
-        print("Barrel detected. Scanning items...")
-        -- Replace with actual logic to retrieve items from the barrel
-        -- Example: return turtle.getItemDetail(slot)
-        return {"item1", "item2", "item3"}
-    else
-        print("No barrel detected.")
-        return {}
+    local items = {}
+    for slot = 1, 16 do
+        turtle.select(slot)
+        if turtle.suck() then
+            local itemDetail = turtle.getItemDetail()
+            if itemDetail then
+                table.insert(items, itemDetail.name)
+                print("Retrieved " .. itemDetail.count .. " of " .. itemDetail.name)
+            end
+        end
+    end
+    return items
+end
+
+-- Function to place items in a barrel
+local function placeItemsInBarrel(items)
+    for _, item in ipairs(items) do
+        for slot = 1, 16 do
+            turtle.select(slot)
+            local itemDetail = turtle.getItemDetail()
+            if itemDetail and itemDetail.name == item then
+                turtle.drop()
+                print("Placed " .. itemDetail.count .. " of " .. itemDetail.name)
+                break
+            end
+        end
     end
 end
 
 -- Function to check and sort items
 local function checkAndSortItems(inputItems)
-    -- Turn to check side barrels
-    turnLeft()
-    local leftItems = getBarrelItems()
-    turnRight()
-    turnRight()
-    local rightItems = getBarrelItems()
-    turnLeft()
+    local barrelItems = {}
+
+    -- Iterate over barrels
+    for i = 1, 4 do  -- Example: check 4 barrels
+        moveForward()
+        if checkForBarrel() then
+            local items = getBarrelItems()
+            table.insert(barrelItems, items)
+        end
+    end
 
     -- Use LLM to decide what to do with the items
-    local prompt = "Input items: " .. table.concat(inputItems, ", ") .. ". " ..
-                   "Left barrel items: " .. table.concat(leftItems, ", ") .. ". " ..
-                   "Right barrel items: " .. table.concat(rightItems, ", ") .. ". " ..
-                   "Based on the input items, decide which items should be moved to the left and right barrels. " ..
-                   "Consider the current inventory and sorting rules."
+    local prompt = "Input items: " .. table.concat(inputItems, ", ") .. ". "
+    for index, items in ipairs(barrelItems) do
+        prompt = prompt .. "Barrel " .. index .. " items: " .. table.concat(items, ", ") .. ". "
+    end
+    prompt = prompt .. "Decide which items should be moved to each barrel based on their contents."
+
     local response = llm.getGeminiResponse(prompt)
     if response then
         print("LLM response: " .. response)
-        -- Implement logic to move items based on LLM response
-        -- (This part will depend on the response format and your specific requirements)
+        -- Parse the LLM response to determine item placement
+        for index, items in ipairs(barrelItems) do
+            local moveToBarrel = {}
+            for item in response:gmatch("move (.-) to barrel " .. index) do
+                table.insert(moveToBarrel, item)
+            end
+            -- Place items in the barrel
+            placeItemsInBarrel(moveToBarrel)
+            moveForward()
+        end
     else
         print("No response from LLM.")
     end
