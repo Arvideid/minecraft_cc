@@ -14,7 +14,7 @@ function getGeminiResponse(prompt)
         prompt = prompt
     })
 
-    local response = http.post(url, body, headers)
+    local response, err = http.post(url, body, headers)
     if response then
         local content = response.readAll()
         response.close()
@@ -22,6 +22,9 @@ function getGeminiResponse(prompt)
         return data.response  -- Adjust based on the actual response structure
     else
         print("Failed to fetch data from Gemini API")
+        if err then
+            print("Error: " .. err)
+        end
         return nil
     end
 end
