@@ -705,22 +705,28 @@ end
 
 -- Optimized sort items function with improved movement
 function sortingTurtle.sortItems()
+    -- Clear movement history before starting to sort
+    sortingTurtle.moveHistory = {}
+    
     -- Check if we need to rescan barrels
     local currentTime = os.epoch("local")
     if sortingTurtle.numBarrels == 0 or 
        (currentTime - sortingTurtle.lastScanTime) > sortingTurtle.config.SCAN_INTERVAL then
         sortingTurtle.scanBarrels()
-        -- If no barrels found, just return to initial position
+        -- If no barrels found, just return
         if sortingTurtle.numBarrels == 0 then 
             return 
         end
     end
+    
+    print("\nChecking input chest for items...")
     
     -- Move to the input chest
     if not turtle.forward() then
         print("Cannot reach input chest!")
         return
     end
+    sortingTurtle.addToHistory("forward")
 
     -- First check if there are any items to sort
     local hasItems = false
@@ -734,12 +740,18 @@ function sortingTurtle.sortItems()
 
     -- If no items to sort, return to initial position
     if not hasItems then
-        turtle.back()
+        print("No items found in chest.")
+        sortingTurtle.returnToInitial()
         return
     end
 
+    print("Found items to sort!")
+
     -- Process items in the chest
     local itemsMoved = false
+    local itemsSorted = 0
+    local itemsSkipped = 0
+    
     while true do
         local hasMoreItems = false
         
@@ -748,29 +760,40 @@ function sortingTurtle.sortItems()
             local itemDetail = turtle.getItemDetail()
             if itemDetail then
                 local itemCategory = sortingTurtle.getItemCategory(itemDetail.name)
+                print(string.format("\nProcessing: %s (Category: %s)", 
+                    itemDetail.displayName or itemDetail.name,
+                    itemCategory))
+                
                 local barrelSlot = sortingTurtle.getBarrelSlot(itemDetail.name, itemCategory)
                 
                 if barrelSlot and itemCategory ~= "unknown" then
+                    print(string.format("Moving to barrel %d...", barrelSlot))
                     -- Move to barrel and drop item
                     if sortingTurtle.moveToBarrel(barrelSlot) then
                         if turtle.drop() then
                             itemsMoved = true
+                            itemsSorted = itemsSorted + 1
                             -- Update barrel contents in memory
                             sortingTurtle.barrels[barrelSlot].contents = {
                                 name = itemDetail.name,
                                 displayName = itemDetail.displayName,
                                 category = itemCategory
                             }
+                            print(string.format("Stored in barrel %d", barrelSlot))
                         end
                         -- Return to the input chest
                         sortingTurtle.returnToChest()
                     else
                         -- If we couldn't reach the barrel, drop item back in chest
                         turtle.drop()
+                        itemsSkipped = itemsSkipped + 1
+                        print("Could not reach barrel, returning item to chest")
                     end
                 else
                     -- Return item to chest if no suitable barrel or unknown category
                     turtle.drop()
+                    itemsSkipped = itemsSkipped + 1
+                    print("No suitable barrel found, returning item to chest")
                 end
             end
             
@@ -793,13 +816,17 @@ function sortingTurtle.sortItems()
         end
     end
     
-    -- Only print status if items were actually moved
+    -- Print summary
     if itemsMoved then
-        print("Items sorted successfully")
+        print(string.format("\nSorting complete:"))
+        print(string.format("- Items sorted: %d", itemsSorted))
+        print(string.format("- Items skipped: %d", itemsSkipped))
+    else
+        print("\nNo items were sorted")
     end
     
-    -- Return to starting position
-    turtle.back()
+    -- Return to initial position using movement history
+    sortingTurtle.returnToInitial()
 end
 
 -- Main loop
