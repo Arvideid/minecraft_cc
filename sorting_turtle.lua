@@ -483,6 +483,8 @@ function sortingTurtle.moveToBarrel(barrelNumber)
             sortingTurtle.updatePosition("forward")
             currentStep = currentStep + 1
         else
+            -- If movement is blocked, try to return to chest
+            sortingTurtle.returnToChest()
             return false
         end
     end
@@ -650,7 +652,10 @@ function sortingTurtle.sortItems()
     if sortingTurtle.numBarrels == 0 or 
        (currentTime - sortingTurtle.lastScanTime) > sortingTurtle.config.SCAN_INTERVAL then
         sortingTurtle.scanBarrels()
-        if sortingTurtle.numBarrels == 0 then return end
+        -- If no barrels found, just return to initial position
+        if sortingTurtle.numBarrels == 0 then 
+            return 
+        end
     end
     
     -- Move to the input chest
@@ -659,17 +664,35 @@ function sortingTurtle.sortItems()
         return
     end
 
-    -- Check each slot in the turtle's inventory
-    local itemsMoved = false
+    -- First check if there are any items to sort
+    local hasItems = false
     for slot = 1, 16 do
-        turtle.select(slot)
+        if turtle.suck() then
+            hasItems = true
+            turtle.drop() -- Put it back for now
+            break
+        end
+    end
+
+    -- If no items to sort, return to initial position
+    if not hasItems then
+        turtle.back()
+        return
+    end
+
+    -- Process items in the chest
+    local itemsMoved = false
+    while true do
+        local hasMoreItems = false
+        
+        -- Try to get an item
         if turtle.suck() then
             local itemDetail = turtle.getItemDetail()
             if itemDetail then
                 local itemCategory = sortingTurtle.getItemCategory(itemDetail.name)
                 local barrelSlot = sortingTurtle.getBarrelSlot(itemDetail.name, itemCategory)
                 
-                if barrelSlot then
+                if barrelSlot and itemCategory ~= "unknown" then
                     -- Move to barrel and drop item
                     if sortingTurtle.moveToBarrel(barrelSlot) then
                         if turtle.drop() then
@@ -688,10 +711,27 @@ function sortingTurtle.sortItems()
                         turtle.drop()
                     end
                 else
-                    -- Return item to chest if no suitable barrel
+                    -- Return item to chest if no suitable barrel or unknown category
                     turtle.drop()
                 end
             end
+            
+            -- Check if there are more items to process
+            for slot = 1, 16 do
+                if turtle.suck() then
+                    hasMoreItems = true
+                    turtle.drop() -- Put it back for now
+                    break
+                end
+            end
+            
+            -- If no more items, break the loop
+            if not hasMoreItems then
+                break
+            end
+        else
+            -- No more items to sort
+            break
         end
     end
     
@@ -705,7 +745,7 @@ function sortingTurtle.sortItems()
 end
 
 -- Main loop
-print("=== Smart Sorting Turtle v2.4 ===")
+print("=== Smart Sorting Turtle v2.5 ===")
 print("Setup Instructions:")
 print("1. Place turtle behind input chest, facing the chest")
 print("2. Place barrels in a line to the left of the chest, facing the path")
