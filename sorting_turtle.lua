@@ -207,23 +207,37 @@ local function setInitialState()
     print("Initial state set at position (" .. initialPosition.x .. ", " .. initialPosition.y .. ", " .. initialPosition.z .. ") facing direction " .. initialDirection)
 end
 
--- Function to return to the initial state
+-- Function to attempt moving forward with obstacle handling
+local function tryMoveForward()
+    if not turtle.forward() then
+        print("Obstacle detected, attempting to clear...")
+        turtle.dig()
+        if not turtle.forward() then
+            print("Still cannot move forward.")
+            return false
+        end
+    end
+    updatePosition()
+    return true
+end
+
+-- Function to return to the initial state with pathfinding
 local function returnToInitialState()
     print("Returning to initial state...")
     -- Navigate back to the initial position
     while position.x ~= initialPosition.x or position.z ~= initialPosition.z do
         if position.x < initialPosition.x then
             while direction ~= 1 do turnRight() end
-            moveForward()
+            if not tryMoveForward() then return end
         elseif position.x > initialPosition.x then
             while direction ~= 3 do turnRight() end
-            moveForward()
+            if not tryMoveForward() then return end
         elseif position.z < initialPosition.z then
             while direction ~= 0 do turnRight() end
-            moveForward()
+            if not tryMoveForward() then return end
         elseif position.z > initialPosition.z then
             while direction ~= 2 do turnRight() end
-            moveForward()
+            if not tryMoveForward() then return end
         end
     end
     -- Adjust to the initial direction
