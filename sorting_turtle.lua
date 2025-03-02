@@ -5,6 +5,10 @@ local llm = require("llm")
 local position = {x = 0, y = 0, z = 0}
 local direction = 0  -- 0: north, 1: east, 2: south, 3: west
 
+-- Store the input barrel's position and orientation
+local inputBarrelPosition = {x = 0, y = 0, z = 0}
+local inputBarrelDirection = 0
+
 -- Function to update position based on direction
 local function updatePosition()
     if direction == 0 then
@@ -148,14 +152,26 @@ local function checkAndSortItems(inputItems)
     end
 end
 
--- Function to sense the environment
-local function senseEnvironment()
+-- Function to sense the environment and store input barrel position
+local function senseEnvironmentAndStoreInputBarrel()
     local frontSuccess, frontData = turtle.inspect()
+    if frontSuccess and frontData.name == "minecraft:barrel" then
+        print("Input barrel detected at front.")
+        inputBarrelPosition = {x = position.x, y = position.y, z = position.z}
+        inputBarrelDirection = direction
+    end
     local belowSuccess, belowData = turtle.inspectDown()
     local aboveSuccess, aboveData = turtle.inspectUp()
-    print("Front: " .. (frontSuccess and frontData.name or "none"))
     print("Below: " .. (belowSuccess and belowData.name or "none"))
     print("Above: " .. (aboveSuccess and aboveData.name or "none"))
+end
+
+-- Function to navigate around the input barrel
+local function navigateAroundInputBarrel()
+    -- Turn around to explore other barrels
+    turnRight()
+    turnRight()
+    print("Navigating around the input barrel.")
 end
 
 -- Main function to control the turtle
@@ -166,11 +182,12 @@ local function controlTurtle()
             print("Please refuel the turtle.")
             os.sleep(2)
         else
-            -- Sense the environment
-            senseEnvironment()
+            -- Sense the environment and store input barrel position
+            senseEnvironmentAndStoreInputBarrel()
             -- Scan the input barrel
             local inputItems = getBarrelItems()
             if #inputItems > 0 then
+                navigateAroundInputBarrel()
                 checkAndSortItems(inputItems)
             else
                 print("No items in input barrel.")
