@@ -23,6 +23,13 @@ sortingTurtle.numBarrels = 0
 sortingTurtle.lastScanTime = 0
 sortingTurtle.position = { x = 0, y = 0, z = 0, facing = 0 }  -- 0=north, 1=east, 2=south, 3=west
 
+-- After the configuration section, add new environment tracking
+sortingTurtle.environment = {
+    blocks = {},  -- Will store block information in a 3D grid
+    lastScan = {},  -- Last scan results
+    SCAN_RADIUS = 4  -- How far to scan in each direction
+}
+
 -- Function to check if a block is a barrel
 function sortingTurtle.isBarrel()
     local success, data = turtle.inspect()
@@ -306,9 +313,119 @@ function sortingTurtle.getTotalItems()
     return total
 end
 
--- Function to scan and map barrels
+-- Function to perform a 360-degree scan
+function sortingTurtle.scan360()
+    local scan = {
+        north = {},
+        east = {},
+        south = {},
+        west = {},
+        up = turtle.detectUp(),
+        down = turtle.detectDown(),
+        upBlock = nil,
+        downBlock = nil
+    }
+    
+    -- Get up/down block data
+    if scan.up then
+        local success, data = turtle.inspectUp()
+        if success then scan.upBlock = data end
+    end
+    if scan.down then
+        local success, data = turtle.inspectDown()
+        if success then scan.downBlock = data end
+    end
+    
+    -- Store original facing direction
+    local originalFacing = sortingTurtle.position.facing
+    
+    -- Scan in all four directions
+    for i = 0, 3 do
+        local direction = ({"north", "east", "south", "west"})[i + 1]
+        local success, data = turtle.inspect()
+        scan[direction] = {
+            exists = success,
+            block = data
+        }
+        sortingTurtle.safeMove("turnRight")
+    end
+    
+    -- Return to original facing direction
+    while sortingTurtle.position.facing ~= originalFacing do
+        sortingTurtle.safeMove("turnRight")
+    end
+    
+    sortingTurtle.lastScan = scan
+    return scan
+end
+
+-- Function to analyze surroundings and find interesting blocks
+function sortingTurtle.analyzeSurroundings()
+    local scan = sortingTurtle.scan360()
+    local findings = {
+        barrels = {},
+        chests = {},
+        obstacles = {},
+        interesting = {}
+    }
+    
+    -- Helper function to categorize a block
+    local function categorizeBlock(block, direction, distance)
+        if not block then return end
+        
+        local info = {
+            name = block.name,
+            direction = direction,
+            distance = distance or 1
+        }
+        
+        if block.name:find("barrel") or block.name:find("storage") then
+            table.insert(findings.barrels, info)
+        elseif block.name:find("chest") then
+            table.insert(findings.chests, info)
+        elseif block.name ~= "minecraft:air" then
+            table.insert(findings.obstacles, info)
+        end
+        
+        -- Add any special blocks you want to track
+        if block.name:find("diamond") or block.name:find("chest") or
+           block.name:find("furnace") or block.name:find("crafting") then
+            table.insert(findings.interesting, info)
+        end
+    end
+    
+    -- Analyze each direction
+    for direction, data in pairs(scan) do
+        if direction ~= "up" and direction ~= "down" and data.block then
+            categorizeBlock(data.block, direction)
+        end
+    end
+    
+    -- Analyze up/down
+    if scan.upBlock then categorizeBlock(scan.upBlock, "up") end
+    if scan.downBlock then categorizeBlock(scan.downBlock, "down") end
+    
+    return findings
+end
+
+-- Function to map current position
+function sortingTurtle.mapPosition()
+    local surroundings = sortingTurtle.analyzeSurroundings()
+    local pos = sortingTurtle.position
+    local key = string.format("%d,%d,%d", pos.x, pos.y, pos.z)
+    
+    sortingTurtle.environment.blocks[key] = {
+        position = {x = pos.x, y = pos.y, z = pos.z},
+        surroundings = surroundings,
+        timestamp = os.epoch("local")
+    }
+    
+    return surroundings
+end
+
+-- Modify the scanBarrels function to use the new scanning capabilities
 function sortingTurtle.scanBarrels()
-    print("\n=== Starting Barrel Scan ===")
+    print("\n=== Starting Enhanced Barrel Scan ===")
     sortingTurtle.barrels = {}
     sortingTurtle.numBarrels = 0
     local steps = 0
@@ -319,26 +436,51 @@ function sortingTurtle.scanBarrels()
         return
     end
     
+    -- Initial 360 scan at starting position
+    print("Performing initial environment scan...")
+    local initialScan = sortingTurtle.mapPosition()
+    print(string.format("Found %d interesting blocks nearby", 
+        #initialScan.interesting))
+    
     -- Turn right to start scanning
     print("Turning right to scan...")
     sortingTurtle.safeMove("turnRight")
     
-    -- First pass: Move forward and count barrels
-    print("First pass: Counting barrels...")
+    -- First pass: Move forward and count barrels with enhanced scanning
+    print("First pass: Scanning environment and counting barrels...")
     while steps < sortingTurtle.config.MAX_STEPS do
-        local surroundings = sortingTurtle.detectSurroundings()
-        if surroundings.front.block and sortingTurtle.isBarrel() then
-            steps = steps + 1
-            print(string.format("Found barrel at position %d", steps))
-            table.insert(sortingTurtle.barrels, {
-                position = steps,
-                contents = {
-                    name = "unknown",
-                    displayName = "unknown",
-                    category = "unknown"
-                }
-            })
-            sortingTurtle.numBarrels = sortingTurtle.numBarrels + 1
+        -- Perform 360 scan at current position
+        local scan = sortingTurtle.mapPosition()
+        
+        -- Check for barrels in the scan
+        if #scan.barrels > 0 then
+            for _, barrel in ipairs(scan.barrels) do
+                if barrel.direction == "front" then
+                    steps = steps + 1
+                    print(string.format("Found barrel at position %d (%s)", 
+                        steps, barrel.name))
+                    
+                    table.insert(sortingTurtle.barrels, {
+                        position = steps,
+                        contents = {
+                            name = "unknown",
+                            displayName = "unknown",
+                            category = "unknown"
+                        },
+                        blockData = barrel
+                    })
+                    sortingTurtle.numBarrels = sortingTurtle.numBarrels + 1
+                end
+            end
+        end
+        
+        -- Check for obstacles
+        if #scan.obstacles > 0 then
+            print("Detected obstacles:")
+            for _, obstacle in ipairs(scan.obstacles) do
+                print(string.format("  - %s (%s)", 
+                    obstacle.name, obstacle.direction))
+            end
         end
         
         if not sortingTurtle.safeMove("forward") then
@@ -358,11 +500,16 @@ function sortingTurtle.scanBarrels()
         for i = 1, sortingTurtle.numBarrels do
             -- Move to barrel
             for j = 1, sortingTurtle.barrels[i].position do
+                -- Scan environment at each step
+                local scan = sortingTurtle.mapPosition()
                 if not sortingTurtle.safeMove("forward") then
                     print("Error reaching barrel " .. i)
                     break
                 end
             end
+            
+            -- Final scan at barrel position
+            sortingTurtle.mapPosition()
             
             -- Read contents
             local contents = sortingTurtle.readBarrel()
@@ -381,16 +528,26 @@ function sortingTurtle.scanBarrels()
     end
     
     sortingTurtle.lastScanTime = os.epoch("local")
-    print(string.format("\nScan complete. Found %d barrels.", sortingTurtle.numBarrels))
     
-    -- Print barrel summary with more details
-    print("\nDetailed Barrel Summary:")
+    -- Print enhanced barrel summary
+    print("\n=== Enhanced Environment Summary ===")
+    print(string.format("Found %d barrels", sortingTurtle.numBarrels))
+    print("\nBarrel Details:")
     for i, barrel in ipairs(sortingTurtle.barrels) do
-        print(string.format("Barrel %d:", i))
+        print(string.format("\nBarrel %d:", i))
         print(string.format("  Position: %d blocks east", barrel.position))
+        print(string.format("  Block Type: %s", barrel.blockData.name))
         print(string.format("  Contents: %s", barrel.contents.displayName))
         print(string.format("  Category: %s", barrel.contents.category))
     end
+    
+    -- Print environment map
+    print("\nEnvironment Map:")
+    local blockCount = 0
+    for pos, data in pairs(sortingTurtle.environment.blocks) do
+        blockCount = blockCount + 1
+    end
+    print(string.format("Mapped %d positions", blockCount))
 end
 
 -- Function to determine which barrel slot to use based on item name using LLM
