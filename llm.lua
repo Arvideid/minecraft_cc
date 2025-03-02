@@ -6,8 +6,12 @@ local apiKey = "AIzaSyBovnTYV5SFtsB-Gk5RAQjjPFFKpsZ5SCw"  -- Replace with your a
 -- Function to log messages to a file
 local function logToFile(message)
     local file = fs.open("gemini_api_log.txt", "a")
-    file.writeLine(message)
-    file.close()
+    if file then
+        file.writeLine(message)
+        file.close()
+    else
+        print("Error: Unable to open log file.")
+    end
 end
 
 -- Function to send a prompt to the Gemini API and get a response
