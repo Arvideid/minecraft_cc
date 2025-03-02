@@ -1,25 +1,45 @@
 -- Import the LLM module
 local llm = require("llm")
 
--- Function to move the turtle forward
+-- Coordinate tracking
+local position = {x = 0, y = 0, z = 0}
+local direction = 0  -- 0: north, 1: east, 2: south, 3: west
+
+-- Function to update position based on direction
+local function updatePosition()
+    if direction == 0 then
+        position.z = position.z - 1
+    elseif direction == 1 then
+        position.x = position.x + 1
+    elseif direction == 2 then
+        position.z = position.z + 1
+    elseif direction == 3 then
+        position.x = position.x - 1
+    end
+end
+
+-- Function to move the turtle forward with position update
 local function moveForward()
     if turtle.forward() then
-        print("Moved forward.")
+        updatePosition()
+        print("Moved forward to (" .. position.x .. ", " .. position.y .. ", " .. position.z .. ")")
     else
         print("Cannot move forward.")
     end
 end
 
--- Function to turn the turtle left
+-- Function to turn the turtle left with direction update
 local function turnLeft()
     turtle.turnLeft()
-    print("Turned left.")
+    direction = (direction - 1) % 4
+    print("Turned left. Now facing direction " .. direction)
 end
 
--- Function to turn the turtle right
+-- Function to turn the turtle right with direction update
 local function turnRight()
     turtle.turnRight()
-    print("Turned right.")
+    direction = (direction + 1) % 4
+    print("Turned right. Now facing direction " .. direction)
 end
 
 -- Function to check for a barrel in front
@@ -64,7 +84,8 @@ local function getBarrelItems()
     local success, data = turtle.inspect()
     if success and data.name == "minecraft:barrel" then
         print("Barrel detected. Scanning items...")
-        -- Simulate getting items (replace with actual logic if needed)
+        -- Replace with actual logic to retrieve items from the barrel
+        -- Example: return turtle.getItemDetail(slot)
         return {"item1", "item2", "item3"}
     else
         print("No barrel detected.")
@@ -86,7 +107,8 @@ local function checkAndSortItems(inputItems)
     local prompt = "Input items: " .. table.concat(inputItems, ", ") .. ". " ..
                    "Left barrel items: " .. table.concat(leftItems, ", ") .. ". " ..
                    "Right barrel items: " .. table.concat(rightItems, ", ") .. ". " ..
-                   "Decide which items to move to the side barrels."
+                   "Based on the input items, decide which items should be moved to the left and right barrels. " ..
+                   "Consider the current inventory and sorting rules."
     local response = llm.getGeminiResponse(prompt)
     if response then
         print("LLM response: " .. response)
@@ -97,6 +119,16 @@ local function checkAndSortItems(inputItems)
     end
 end
 
+-- Function to sense the environment
+local function senseEnvironment()
+    local frontSuccess, frontData = turtle.inspect()
+    local belowSuccess, belowData = turtle.inspectDown()
+    local aboveSuccess, aboveData = turtle.inspectUp()
+    print("Front: " .. (frontSuccess and frontData.name or "none"))
+    print("Below: " .. (belowSuccess and belowData.name or "none"))
+    print("Above: " .. (aboveSuccess and aboveData.name or "none"))
+end
+
 -- Main function to control the turtle
 local function controlTurtle()
     while true do
@@ -105,6 +137,8 @@ local function controlTurtle()
             print("Please refuel the turtle.")
             os.sleep(2)
         else
+            -- Sense the environment
+            senseEnvironment()
             -- Scan the input barrel
             local inputItems = getBarrelItems()
             if #inputItems > 0 then
