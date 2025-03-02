@@ -850,6 +850,9 @@ function sortingTurtle.sortItems()
         end
     end
     
+    -- Return to initial position before printing summary
+    sortingTurtle.returnToInitial()
+    
     -- Print summary
     if itemsMoved then
         print(string.format("\nSorting complete:"))
