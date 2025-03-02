@@ -474,7 +474,7 @@ function sortingTurtle.moveToBarrel(barrelNumber)
         end
     end
     
-    -- Move forward to the barrel position
+    -- Move to position in front of the target barrel
     local stepsNeeded = sortingTurtle.barrels[barrelNumber].position
     local currentStep = 0
     
@@ -486,13 +486,18 @@ function sortingTurtle.moveToBarrel(barrelNumber)
             return false
         end
     end
+
+    -- Turn right to face the barrel
+    turtle.turnRight()
+    sortingTurtle.updatePosition("turnRight")
+    
     return true
 end
 
 -- Function to return to the input chest
 function sortingTurtle.returnToChest()
-    -- Turn around to face east (opposite of barrels)
-    while sortingTurtle.position.facing ~= 1 do  -- 1 is east (right)
+    -- First turn back to face the path (west)
+    while sortingTurtle.position.facing ~= 3 do  -- 3 is west (left)
         turtle.turnLeft()
         sortingTurtle.updatePosition("turnLeft")
     end
@@ -532,21 +537,23 @@ function sortingTurtle.scanBarrels()
     -- Back away from chest
     turtle.back()
     
-    -- Turn left to face the barrels
+    -- Turn left to face the path
     while sortingTurtle.position.facing ~= 3 do  -- 3 is west (left)
         turtle.turnLeft()
         sortingTurtle.updatePosition("turnLeft")
     end
     
-    -- Single pass: Move forward and scan barrels
+    -- Single pass: Move and scan barrels
     print("Scanning for barrels...")
     while steps < sortingTurtle.config.MAX_STEPS do
-        -- Check what's in front
+        -- Turn right to face potential barrel
+        turtle.turnRight()
+        sortingTurtle.updatePosition("turnRight")
+        
+        -- Check for barrel
         local success, data = turtle.inspect()
         if success and data then
             if string.find(data.name or "", "barrel") or string.find(data.name or "", "storage") then
-                steps = steps + 1
-                
                 -- Read barrel contents immediately
                 local contents = sortingTurtle.readBarrel()
                 table.insert(sortingTurtle.barrels, {
@@ -561,6 +568,10 @@ function sortingTurtle.scanBarrels()
                     contents.category or "none"))
             end
         end
+        
+        -- Turn back to face the path
+        turtle.turnLeft()
+        sortingTurtle.updatePosition("turnLeft")
         
         -- Try to move forward
         if not turtle.forward() then
@@ -694,10 +705,10 @@ function sortingTurtle.sortItems()
 end
 
 -- Main loop
-print("=== Smart Sorting Turtle v2.3 ===")
+print("=== Smart Sorting Turtle v2.4 ===")
 print("Setup Instructions:")
 print("1. Place turtle behind input chest, facing the chest")
-print("2. Place barrels in a line to the left of the chest")
+print("2. Place barrels in a line to the left of the chest, facing the path")
 print("3. Ensure all barrels are accessible")
 
 -- Do initial barrel scan
