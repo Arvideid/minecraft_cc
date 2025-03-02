@@ -34,11 +34,27 @@ local function checkForBarrel()
     end
 end
 
+-- Function to refuel the turtle using items in its inventory
+local function refuelTurtle()
+    local slot = 16  -- Use only the last slot for refueling
+    turtle.select(slot)
+    if turtle.refuel(0) then  -- Check if the item in the slot can be used as fuel
+        print("Refueling from slot " .. slot)
+        turtle.refuel()  -- Refuel using the item
+        return true
+    end
+    print("No fuel source found in the last inventory slot.")
+    return false
+end
+
 -- Function to check fuel level and refuel if needed
 local function checkFuel()
     if turtle.getFuelLevel() == 0 then
         print("Out of fuel!")
-        return false
+        if not refuelTurtle() then
+            print("Please add fuel to the turtle's inventory.")
+            return false
+        end
     end
     return true
 end
