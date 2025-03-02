@@ -119,15 +119,29 @@ end
 function sortingTurtle.getItemCategory(itemName)
     if not itemName then return "unknown" end
     
+    -- Convert itemName to lowercase for case-insensitive matching
+    itemName = string.lower(itemName)
+    
+    -- Extract mod prefix if it exists
+    local modPrefix = itemName:match("^([^:]+):")
+    
+    -- If it's a mod item, use mod_category format
+    if modPrefix and modPrefix ~= "minecraft" then
+        return "mod_" .. modPrefix
+    end
+    
+    -- For vanilla items or items without clear mod prefix, use basic categories
     local categories = {
-        wood = {"log", "plank", "wood"},
-        stone = {"stone", "cobble", "granite", "diorite", "andesite"},
-        ore = {"ore", "ingot", "raw_"},
-        crop = {"seed", "sapling", "flower", "wheat", "carrot", "potato"},
-        tool = {"pickaxe", "axe", "shovel", "hoe", "sword"},
+        storage = {"chest", "barrel", "drawer", "crate", "container", "tank"},
+        resource = {"log", "plank", "stone", "ore", "ingot", "block", "dust", "gem"},
+        tool = {"pickaxe", "axe", "shovel", "hoe", "sword", "hammer", "wrench"},
         redstone = {"redstone", "repeater", "comparator", "piston"},
+        crop = {"seed", "sapling", "flower", "wheat", "carrot", "potato"},
+        mob_drop = {"bone", "flesh", "leather", "wool", "feather"},
+        decoration = {"torch", "lamp", "bed", "door", "glass", "dye"}
     }
     
+    -- Try to match against our basic categories for non-mod items
     for category, keywords in pairs(categories) do
         for _, keyword in ipairs(keywords) do
             if itemName:find(keyword) then
@@ -135,6 +149,8 @@ function sortingTurtle.getItemCategory(itemName)
             end
         end
     end
+    
+    -- If no match found, return misc
     return "misc"
 end
 
@@ -677,26 +693,30 @@ function sortingTurtle.getBarrelSlot(itemName, itemCategory)
         barrelContext = barrelContext .. string.format("Barrel %d: %s\n", i, status)
     end
     
+    -- Extract mod information
+    local modName = itemName:match("^([^:]+):")
+    local modContext = modName and string.format("\nMod Context:\n- Item is from mod: %s", modName) or ""
+    
     -- Construct a more specific and detailed prompt
     local prompt = string.format([[
-Task: Determine the best barrel (1-%d) for storing an item.
+Task: Determine the best barrel (1-%d) for storing a Minecraft item.
 
 Item Details:
-- Name: %s
-- Category: %s
+- Full Name: %s
+- Category: %s%s
 
 %s
 
 Selection Rules (in priority order):
-1. EXACT MATCH: If a barrel already contains this exact item (matching name), use that barrel
-2. EMPTY BARREL: If there's an empty barrel, use the first empty one
-3. CATEGORY MATCH: If a barrel contains items of the same category, use that barrel
-4. SMART GROUPING: If no category match, try to group similar items (e.g., all building blocks together)
+1. EXACT MATCH: If a barrel already contains this exact item, use that barrel
+2. MOD MATCH: If a barrel contains items from the same mod, prefer that barrel
+3. SIMILAR ITEMS: Group items that are commonly used together in crafting or gameplay
+4. EMPTY BARREL: If no good matches exist, use the first empty barrel
 
 Additional Guidelines:
-- Each barrel should maintain a consistent type of items
-- Avoid mixing different categories unless necessary
-- Consider item relationships (e.g., keep crafting ingredients near their products)
+- Keep items from the same mod together when possible
+- Group similar crafting materials together
+- Consider functional relationships between items
 - If multiple matches exist, prefer the lowest barrel number
 
 Return ONLY a single number between 1 and %d. No explanation needed.
@@ -705,6 +725,7 @@ Selected Barrel Number:]],
         sortingTurtle.numBarrels,
         itemName,
         itemCategory,
+        modContext,
         barrelContext,
         sortingTurtle.numBarrels)
 
