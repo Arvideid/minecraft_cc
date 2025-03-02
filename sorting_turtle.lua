@@ -118,7 +118,7 @@ local function placeItemsInBarrel(items)
 end
 
 -- Function to perform a 360-degree check for barrels and remember them
-local function checkForBarrels360WithMemory()
+local function checkForBarrels360WithMemory(barrelItems)
     for i = 1, 4 do
         if checkForBarrel() then
             local barrelKey = position.x .. "," .. position.y .. "," .. position.z
@@ -141,7 +141,7 @@ local function checkAndSortItems(inputItems)
 
     -- Iterate over barrels
     for i = 1, 4 do  -- Example: check 4 barrels
-        checkForBarrels360WithMemory()
+        checkForBarrels360WithMemory(barrelItems)
         moveForward()
     end
 
