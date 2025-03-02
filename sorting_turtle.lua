@@ -507,9 +507,6 @@ end
 
 -- Function to move to a specific barrel position
 function sortingTurtle.moveToBarrel(barrelNumber)
-    -- Back away from chest first
-    turtle.back()
-    
     -- Turn left to face the barrels if not already facing them
     if sortingTurtle.position.facing ~= 3 then  -- 3 is west (left)
         while sortingTurtle.position.facing ~= 3 do
@@ -517,6 +514,13 @@ function sortingTurtle.moveToBarrel(barrelNumber)
             sortingTurtle.updatePosition("turnLeft")
         end
     end
+    
+    -- Move forward one step to be in line with barrels
+    if not turtle.forward() then
+        print("Cannot move forward to barrel line!")
+        return false
+    end
+    sortingTurtle.updatePosition("forward")
     
     -- Move to position in front of the target barrel
     local stepsNeeded = sortingTurtle.barrels[barrelNumber].position
@@ -557,14 +561,15 @@ function sortingTurtle.returnToChest()
         end
     end
     
-    -- Turn to face the chest (north)
+    -- Move back one step to be behind the input storage
+    turtle.back()
+    sortingTurtle.updatePosition("back")
+    
+    -- Turn to face the input storage (north)
     while sortingTurtle.position.facing ~= 0 do
         turtle.turnLeft()
         sortingTurtle.updatePosition("turnLeft")
     end
-    
-    -- Move forward to the chest
-    turtle.forward()
 end
 
 -- Optimized scan function that only scans in the direction of barrels
@@ -583,20 +588,20 @@ function sortingTurtle.scanBarrels()
         return
     end
     
-    -- Back away from chest
-    if turtle.back() then
-        sortingTurtle.addToHistory("back")
-        sortingTurtle.updatePosition("back")
-    else
-        print("Cannot move back from chest!")
-        return
-    end
-    
-    -- Turn left to face the path
+    -- Turn left to face the path (no need to back away)
     while sortingTurtle.position.facing ~= 3 do  -- 3 is west (left)
         turtle.turnLeft()
         sortingTurtle.addToHistory("turnLeft")
         sortingTurtle.updatePosition("turnLeft")
+    end
+    
+    -- Move forward one step to be in line with the barrels
+    if turtle.forward() then
+        sortingTurtle.addToHistory("forward")
+        sortingTurtle.updatePosition("forward")
+    else
+        print("Cannot move forward to start scanning!")
+        return
     end
     
     -- Single pass: Move and scan barrels
@@ -703,6 +708,19 @@ Number:]],
     return nil
 end
 
+-- Function to check if block in front is a valid storage
+function sortingTurtle.isValidInputStorage()
+    local success, data = turtle.inspect()
+    if success and data then
+        return data.name == "minecraft:chest" or 
+               data.name == "minecraft:barrel" or 
+               data.name:find("chest") or 
+               data.name:find("barrel") or 
+               data.name:find("storage")
+    end
+    return false
+end
+
 -- Optimized sort items function with improved movement
 function sortingTurtle.sortItems()
     -- Clear movement history before starting to sort
@@ -719,16 +737,15 @@ function sortingTurtle.sortItems()
         end
     end
     
-    print("\nChecking input chest for items...")
+    print("\nChecking input storage...")
     
-    -- Move to the input chest
-    if not turtle.forward() then
-        print("Cannot reach input chest!")
+    -- Check if we're facing a valid storage block
+    if not sortingTurtle.isValidInputStorage() then
+        print("No chest or barrel detected in front! Please ensure the turtle is facing the input storage.")
         return
     end
-    sortingTurtle.addToHistory("forward")
 
-    -- First check if there are any items to sort
+    -- Try to access the storage
     local hasItems = false
     for slot = 1, 16 do
         if turtle.suck() then
@@ -740,14 +757,14 @@ function sortingTurtle.sortItems()
 
     -- If no items to sort, return to initial position
     if not hasItems then
-        print("No items found in chest.")
-        sortingTurtle.returnToInitial()
+        print("No items found in input storage.")
         return
     end
 
     print("Found items to sort!")
+    sortingTurtle.addToHistory("none") -- Add dummy history to track position
 
-    -- Process items in the chest
+    -- Process items in the storage
     local itemsMoved = false
     local itemsSorted = 0
     local itemsSkipped = 0
@@ -781,19 +798,19 @@ function sortingTurtle.sortItems()
                             }
                             print(string.format("Stored in barrel %d", barrelSlot))
                         end
-                        -- Return to the input chest
+                        -- Return to the input storage
                         sortingTurtle.returnToChest()
                     else
-                        -- If we couldn't reach the barrel, drop item back in chest
+                        -- If we couldn't reach the barrel, drop item back in storage
                         turtle.drop()
                         itemsSkipped = itemsSkipped + 1
-                        print("Could not reach barrel, returning item to chest")
+                        print("Could not reach barrel, returning item to storage")
                     end
                 else
-                    -- Return item to chest if no suitable barrel or unknown category
+                    -- Return item to storage if no suitable barrel or unknown category
                     turtle.drop()
                     itemsSkipped = itemsSkipped + 1
-                    print("No suitable barrel found, returning item to chest")
+                    print("No suitable barrel found, returning item to storage")
                 end
             end
             
@@ -824,17 +841,19 @@ function sortingTurtle.sortItems()
     else
         print("\nNo items were sorted")
     end
-    
-    -- Return to initial position using movement history
-    sortingTurtle.returnToInitial()
 end
 
 -- Main loop
-print("=== Smart Sorting Turtle v2.5 ===")
+print("=== Smart Sorting Turtle v2.7 ===")
 print("Setup Instructions:")
-print("1. Place turtle behind input chest, facing the chest")
-print("2. Place barrels in a line to the left of the chest, facing the path")
-print("3. Ensure all barrels are accessible")
+print("1. Place input storage (chest or barrel)")
+print("2. Place sorting barrels in a line to the left of the input storage")
+print("3. Place turtle directly behind the input storage, facing it")
+print("4. Ensure all barrels are accessible")
+print("\nLayout should look like this:")
+print("[S][B][B][B]...")
+print("[T]")
+print("Where: T=Turtle (facing up), S=Input Storage, B=Sorting Barrels")
 
 -- Do initial barrel scan
 sortingTurtle.scanBarrels()
