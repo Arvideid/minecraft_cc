@@ -461,7 +461,56 @@ function sortingTurtle.moveWithScan(movement)
     return success
 end
 
--- Optimized scan function that only scans when necessary
+-- Function to move to a specific barrel position
+function sortingTurtle.moveToBarrel(barrelNumber)
+    -- Turn right to face the barrels if not already facing them
+    if sortingTurtle.position.facing ~= 1 then  -- 1 is east (right)
+        while sortingTurtle.position.facing ~= 1 do
+            turtle.turnRight()
+            sortingTurtle.updatePosition("turnRight")
+        end
+    end
+    
+    -- Move forward to the barrel position
+    local stepsNeeded = sortingTurtle.barrels[barrelNumber].position
+    local currentStep = 0
+    
+    while currentStep < stepsNeeded do
+        if turtle.forward() then
+            sortingTurtle.updatePosition("forward")
+            currentStep = currentStep + 1
+        else
+            return false
+        end
+    end
+    return true
+end
+
+-- Function to return to the input chest
+function sortingTurtle.returnToChest()
+    -- Turn around to face west (opposite of barrels)
+    while sortingTurtle.position.facing ~= 3 do  -- 3 is west (left)
+        turtle.turnRight()
+        sortingTurtle.updatePosition("turnRight")
+    end
+    
+    -- Move back to the chest
+    while sortingTurtle.position.x > 0 do
+        if turtle.forward() then
+            sortingTurtle.updatePosition("forward")
+        else
+            break
+        end
+    end
+    
+    -- Turn to face the chest (north)
+    while sortingTurtle.position.facing ~= 0 do
+        turtle.turnRight()
+        sortingTurtle.updatePosition("turnRight")
+    end
+end
+
+-- Optimized scan function that only scans in the direction of barrels
 function sortingTurtle.scanBarrels()
     print("\n=== Starting Barrel Scan ===")
     sortingTurtle.barrels = {}
@@ -474,9 +523,11 @@ function sortingTurtle.scanBarrels()
         return
     end
     
-    -- Turn right to start scanning
-    turtle.turnRight()
-    sortingTurtle.updatePosition("turnRight")
+    -- Turn right to face the barrels
+    while sortingTurtle.position.facing ~= 1 do  -- 1 is east (right)
+        turtle.turnRight()
+        sortingTurtle.updatePosition("turnRight")
+    end
     
     -- Single pass: Move forward and scan barrels
     print("Scanning for barrels...")
@@ -510,8 +561,8 @@ function sortingTurtle.scanBarrels()
         steps = steps + 1
     end
     
-    -- Return to start
-    sortingTurtle.returnHome()
+    -- Return to start using optimized return function
+    sortingTurtle.returnToChest()
     
     sortingTurtle.lastScanTime = os.epoch("local")
     
@@ -572,7 +623,7 @@ Number:]],
     return nil
 end
 
--- Optimized sort items function
+-- Optimized sort items function with improved movement
 function sortingTurtle.sortItems()
     -- Check if we need to rescan barrels
     local currentTime = os.epoch("local")
@@ -600,18 +651,22 @@ function sortingTurtle.sortItems()
                 
                 if barrelSlot then
                     -- Move to barrel and drop item
-                    sortingTurtle.moveToBarrel(barrelSlot)
-                    if turtle.drop() then
-                        itemsMoved = true
-                        -- Update barrel contents in memory
-                        sortingTurtle.barrels[barrelSlot].contents = {
-                            name = itemDetail.name,
-                            displayName = itemDetail.displayName,
-                            category = itemCategory
-                        }
+                    if sortingTurtle.moveToBarrel(barrelSlot) then
+                        if turtle.drop() then
+                            itemsMoved = true
+                            -- Update barrel contents in memory
+                            sortingTurtle.barrels[barrelSlot].contents = {
+                                name = itemDetail.name,
+                                displayName = itemDetail.displayName,
+                                category = itemCategory
+                            }
+                        end
+                        -- Return to the input chest
+                        sortingTurtle.returnToChest()
+                    else
+                        -- If we couldn't reach the barrel, drop item back in chest
+                        turtle.drop()
                     end
-                    -- Return to the input chest
-                    sortingTurtle.returnToChest()
                 else
                     -- Return item to chest if no suitable barrel
                     turtle.drop()
