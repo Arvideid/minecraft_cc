@@ -27,6 +27,9 @@ function getGeminiResponse(prompt)
         response.close()
         print("Response received.")
 
+        -- Print a short snippet of the response content for debugging
+        print("Response snippet: " .. string.sub(content, 1, 100))  -- Print the first 100 characters
+
         local data = textutils.unserializeJSON(content)
         
         -- Adjust based on the actual response structure
