@@ -12,6 +12,9 @@ local inputBarrelDirection = 0
 -- Memory for scanned barrels
 local scannedBarrels = {}
 
+-- Global table to store items from barrels
+local barrelItems = {}
+
 -- Function to update position based on direction
 local function updatePosition()
     if direction == 0 then
@@ -118,7 +121,7 @@ local function placeItemsInBarrel(items)
 end
 
 -- Function to perform a 360-degree check for barrels and remember them
-local function checkForBarrels360WithMemory(barrelItems)
+local function checkForBarrels360WithMemory()
     for i = 1, 4 do
         if checkForBarrel() then
             local barrelKey = position.x .. "," .. position.y .. "," .. position.z
@@ -137,11 +140,12 @@ end
 
 -- Function to check and sort items
 local function checkAndSortItems(inputItems)
-    local barrelItems = {}
+    -- Clear the barrelItems table before use
+    barrelItems = {}
 
     -- Iterate over barrels
     for i = 1, 4 do  -- Example: check 4 barrels
-        checkForBarrels360WithMemory(barrelItems)
+        checkForBarrels360WithMemory()
         moveForward()
     end
 
