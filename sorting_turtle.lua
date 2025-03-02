@@ -779,15 +779,15 @@ function sortingTurtle.sortItems()
     end
 
     print("Found items to sort!")
-    sortingTurtle.addToHistory("none") -- Add dummy history to track position
-
+    
     -- Process items in the storage
     local itemsMoved = false
     local itemsSorted = 0
     local itemsSkipped = 0
     
     while true do
-        local hasMoreItems = false
+        -- Clear movement history before processing each item
+        sortingTurtle.moveHistory = {}
         
         -- Try to get an item
         if turtle.suck() then
@@ -815,8 +815,6 @@ function sortingTurtle.sortItems()
                             }
                             print(string.format("Stored in barrel %d", barrelSlot))
                         end
-                        -- Return to the input storage
-                        sortingTurtle.returnToChest()
                     else
                         -- If we couldn't reach the barrel, drop item back in storage
                         turtle.drop()
@@ -829,9 +827,13 @@ function sortingTurtle.sortItems()
                     itemsSkipped = itemsSkipped + 1
                     print("No suitable barrel found, returning item to storage")
                 end
+                
+                -- Return to initial position after processing each item
+                sortingTurtle.returnToInitial()
             end
             
             -- Check if there are more items to process
+            local hasMoreItems = false
             for slot = 1, 16 do
                 if turtle.suck() then
                     hasMoreItems = true
@@ -849,9 +851,6 @@ function sortingTurtle.sortItems()
             break
         end
     end
-    
-    -- Return to initial position before printing summary
-    sortingTurtle.returnToInitial()
     
     -- Print summary
     if itemsMoved then
