@@ -23,6 +23,9 @@ local initialDirection = 0
 local states = {SCANNING = 1, SORTING = 2, RETURNING = 3}
 local currentState = states.SCANNING
 
+-- Global variable to store input items
+local inputItems = {}
+
 -- Function to update position based on direction
 local function updatePosition()
     if direction == 0 then
@@ -149,47 +152,11 @@ local function checkForBarrels360WithMemory()
     end
 end
 
--- Function to check and sort items
-local function checkAndSortItems(inputItems)
-    -- Clear the barrelItems table before use
-    barrelItems = {}
-
-    -- Iterate over barrels
-    for i = 1, 4 do  -- Example: check 4 barrels
-        checkForBarrels360WithMemory()
-        moveForward()
-    end
-
-    -- Use LLM to decide what to do with the items
-    local prompt = "Input items: " .. table.concat(inputItems, ", ") .. ". "
-    for index, items in ipairs(barrelItems) do
-        prompt = prompt .. "Barrel " .. index .. " items: " .. table.concat(items, ", ") .. ". "
-    end
-    prompt = prompt .. "Decide which items should be moved to each barrel based on their contents."
-
-    local response = llm.getGeminiResponse(prompt)
-    if response then
-        print("LLM response: " .. response)
-        -- Parse the LLM response to determine item placement
-        for index, items in ipairs(barrelItems) do
-            local moveToBarrel = {}
-            for item in response:gmatch("move (.-) to barrel " .. index) do
-                table.insert(moveToBarrel, item)
-            end
-            -- Place items in the barrel
-            placeItemsInBarrel(moveToBarrel)
-            moveForward()
-        end
-    else
-        print("No response from LLM.")
-    end
-end
-
--- Function to sense the environment and store input barrel position
-local function senseEnvironmentAndStoreInputBarrel()
+-- Function to sense the environment and store input chest position
+local function senseEnvironmentAndStoreInputChest()
     local frontSuccess, frontData = turtle.inspect()
-    if frontSuccess and frontData.name == "minecraft:barrel" then
-        print("Input barrel detected at front.")
+    if frontSuccess and frontData.name == "minecraft:chest" then
+        print("Input chest detected at front.")
         inputBarrelPosition = {x = position.x, y = position.y, z = position.z}
         inputBarrelDirection = direction
     end
@@ -255,6 +222,42 @@ local function returnToInitialState()
     print("Returned to initial state at position (" .. position.x .. ", " .. position.y .. ", " .. position.z .. ") facing direction " .. direction)
 end
 
+-- Function to check and sort items
+local function checkAndSortItems(inputItems)
+    -- Clear the barrelItems table before use
+    barrelItems = {}
+
+    -- Iterate over barrels
+    for i = 1, 4 do  -- Example: check 4 barrels
+        checkForBarrels360WithMemory()
+        moveForward()
+    end
+
+    -- Use LLM to decide what to do with the items
+    local prompt = "Input items: " .. table.concat(inputItems, ", ") .. ". "
+    for index, items in ipairs(barrelItems) do
+        prompt = prompt .. "Barrel " .. index .. " items: " .. table.concat(items, ", ") .. ". "
+    end
+    prompt = prompt .. "Decide which items should be moved to each barrel based on their contents."
+
+    local response = llm.getGeminiResponse(prompt)
+    if response then
+        print("LLM response: " .. response)
+        -- Parse the LLM response to determine item placement
+        for index, items in ipairs(barrelItems) do
+            local moveToBarrel = {}
+            for item in response:gmatch("move (.-) to barrel " .. index) do
+                table.insert(moveToBarrel, item)
+            end
+            -- Place items in the barrel
+            placeItemsInBarrel(moveToBarrel)
+            moveForward()
+        end
+    else
+        print("No response from LLM.")
+    end
+end
+
 -- Main function to control the turtle
 local function controlTurtle()
     local firstRun = true
@@ -265,20 +268,20 @@ local function controlTurtle()
             os.sleep(2)
         else
             if currentState == states.SCANNING then
-                -- Sense the environment and store input barrel position
-                senseEnvironmentAndStoreInputBarrel()
+                -- Sense the environment and store input chest position
+                senseEnvironmentAndStoreInputChest()
                 -- Set initial state on first run
                 if firstRun then
                     setInitialState()
                     firstRun = false
                 end
-                -- Scan the input barrel
-                local inputItems = getBarrelItems()
+                -- Scan the input chest
+                inputItems = getBarrelItems()
                 if #inputItems > 0 then
                     navigateAroundInputBarrel()
                     currentState = states.SORTING
                 else
-                    print("No items in input barrel.")
+                    print("No items in input chest.")
                     currentState = states.RETURNING
                 end
             elseif currentState == states.SORTING then
