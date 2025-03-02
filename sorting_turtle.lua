@@ -438,40 +438,22 @@ end
 
 -- Add a new function for step-by-step movement with 360 scanning
 function sortingTurtle.moveWithScan(movement)
-    -- First do a 360 scan before moving
-    print("Scanning surroundings before movement...")
-    local preMoveState = sortingTurtle.mapPosition()
+    -- Only scan if we're moving forward, not for turns
+    local needsScan = (movement == "forward")
     
-    -- Perform the movement
+    -- Perform the movement first
     local success = sortingTurtle.safeMove(movement)
     
-    if success then
-        -- Do another 360 scan after moving
-        print("Scanning surroundings after movement...")
-        local postMoveState = sortingTurtle.mapPosition()
+    if success and needsScan then
+        -- Do a single scan after moving forward
+        local scan = sortingTurtle.mapPosition()
         
-        -- Compare states and report any changes
-        local changes = {
-            newBarrels = 0,
-            newObstacles = 0,
-            newInteresting = 0
-        }
-        
-        if postMoveState.barrels and #postMoveState.barrels > 0 then
-            changes.newBarrels = #postMoveState.barrels
-        end
-        if postMoveState.obstacles and #postMoveState.obstacles > 0 then
-            changes.newObstacles = #postMoveState.obstacles
-        end
-        if postMoveState.interesting and #postMoveState.interesting > 0 then
-            changes.newInteresting = #postMoveState.interesting
-        end
-        
-        if changes.newBarrels > 0 or changes.newObstacles > 0 or changes.newInteresting > 0 then
-            print("Environment changes detected:")
-            if changes.newBarrels > 0 then print("  - Found " .. changes.newBarrels .. " barrels") end
-            if changes.newObstacles > 0 then print("  - Found " .. changes.newObstacles .. " obstacles") end
-            if changes.newInteresting > 0 then print("  - Found " .. changes.newInteresting .. " interesting blocks") end
+        -- Report only if we found something
+        if #scan.barrels > 0 or #scan.obstacles > 0 or #scan.interesting > 0 then
+            print("Environment scan results:")
+            if #scan.barrels > 0 then print("  - Found " .. #scan.barrels .. " barrels") end
+            if #scan.obstacles > 0 then print("  - Found " .. #scan.obstacles .. " obstacles") end
+            if #scan.interesting > 0 then print("  - Found " .. #scan.interesting .. " interesting blocks") end
         end
     end
     
@@ -491,72 +473,67 @@ function sortingTurtle.scanBarrels()
         return
     end
     
-    -- Initial 360 scan at starting position
-    print("Performing initial environment scan...")
-    local initialScan = sortingTurtle.mapPosition()
-    print(string.format("Found %d interesting blocks nearby", 
-        #initialScan.interesting))
+    -- Initial scan at starting position
+    print("Performing initial scan...")
+    local scan = sortingTurtle.scan360()
     
     -- Turn right to start scanning
-    print("Turning right to scan...")
-    sortingTurtle.moveWithScan("turnRight")
+    turtle.turnRight()
+    sortingTurtle.updatePosition("turnRight")
     
-    -- First pass: Move forward and count barrels with enhanced scanning
-    print("First pass: Scanning environment and counting barrels...")
+    -- First pass: Move forward and count barrels
+    print("First pass: Scanning for barrels...")
     while steps < sortingTurtle.config.MAX_STEPS do
-        -- Perform 360 scan at current position
-        local scan = sortingTurtle.mapPosition()
-        
-        -- Check for barrels in the scan
-        if #scan.barrels > 0 then
-            for _, barrel in ipairs(scan.barrels) do
-                if barrel.direction == "front" then
-                    steps = steps + 1
-                    print(string.format("Found barrel at position %d (%s)", 
-                        steps, barrel.name))
-                    
-                    table.insert(sortingTurtle.barrels, {
-                        position = steps,
-                        contents = {
-                            name = "unknown",
-                            displayName = "unknown",
-                            category = "unknown"
-                        },
-                        blockData = barrel
-                    })
-                    sortingTurtle.numBarrels = sortingTurtle.numBarrels + 1
-                end
+        -- Check what's in front
+        local success, data = turtle.inspect()
+        if success and data then
+            if string.find(data.name or "", "barrel") or string.find(data.name or "", "storage") then
+                steps = steps + 1
+                print(string.format("Found barrel at position %d (%s)", steps, data.name))
+                
+                table.insert(sortingTurtle.barrels, {
+                    position = steps,
+                    contents = {
+                        name = "unknown",
+                        displayName = "unknown",
+                        category = "unknown"
+                    },
+                    blockData = data
+                })
+                sortingTurtle.numBarrels = sortingTurtle.numBarrels + 1
             end
         end
         
-        -- Move forward with 360 scan
+        -- Try to move forward
         if not sortingTurtle.moveWithScan("forward") then
             print("Path blocked at step " .. steps)
             break
         end
+        steps = steps + 1
     end
     
-    -- Return to start using position tracking with scanning
-    print("\nReturning to home position with environment scanning...")
-    sortingTurtle.returnHomeWithScanning()
+    -- Return to start
+    print("\nReturning to home position...")
+    sortingTurtle.returnHome()
     
     -- If we found barrels, do a second pass to read contents
     if sortingTurtle.numBarrels > 0 then
         print("\nSecond pass: Reading barrel contents...")
-        sortingTurtle.moveWithScan("turnRight")
+        turtle.turnRight()
+        sortingTurtle.updatePosition("turnRight")
         
         for i = 1, sortingTurtle.numBarrels do
-            print(string.format("\nMoving to barrel %d with continuous scanning...", i))
             -- Move to barrel
             for j = 1, sortingTurtle.barrels[i].position do
-                if not sortingTurtle.moveWithScan("forward") then
+                if not turtle.forward() then
                     print("Error reaching barrel " .. i)
                     break
                 end
+                sortingTurtle.updatePosition("forward")
             end
             
             -- Read contents
-            print("Reading barrel contents...")
+            print(string.format("Reading barrel %d contents...", i))
             local contents = sortingTurtle.readBarrel()
             sortingTurtle.barrels[i].contents = contents
             print(string.format("Barrel %d contains: %s (%s)", 
@@ -564,145 +541,32 @@ function sortingTurtle.scanBarrels()
                 contents.displayName or "empty", 
                 contents.category or "none"))
             
-            -- Return to start with scanning
-            sortingTurtle.returnHomeWithScanning()
+            -- Return to start
+            sortingTurtle.returnHome()
             if i < sortingTurtle.numBarrels then
-                sortingTurtle.moveWithScan("turnRight")
+                turtle.turnRight()
+                sortingTurtle.updatePosition("turnRight")
             end
         end
     end
     
     sortingTurtle.lastScanTime = os.epoch("local")
     
-    -- Print enhanced barrel summary with environment data
-    print("\n=== Enhanced Environment Summary ===")
+    -- Print barrel summary
+    print("\n=== Barrel Scan Summary ===")
     print(string.format("Found %d barrels", sortingTurtle.numBarrels))
-    print("\nBarrel Details:")
-    for i, barrel in ipairs(sortingTurtle.barrels) do
-        print(string.format("\nBarrel %d:", i))
-        print(string.format("  Position: %d blocks east", barrel.position))
-        print(string.format("  Block Type: %s", barrel.blockData.name))
-        print(string.format("  Contents: %s", barrel.contents.displayName))
-        print(string.format("  Category: %s", barrel.contents.category))
-    end
-    
-    -- Print environment map
-    print("\nEnvironment Map:")
-    local blockCount = 0
-    local positionsSeen = {}
-    for pos, data in pairs(sortingTurtle.environment.blocks) do
-        blockCount = blockCount + 1
-        table.insert(positionsSeen, pos)
-    end
-    print(string.format("Mapped %d unique positions", blockCount))
-    print("Positions mapped:")
-    for _, pos in ipairs(positionsSeen) do
-        print("  - " .. pos)
-    end
-end
-
--- Add new function for returning home with continuous scanning
-function sortingTurtle.returnHomeWithScanning()
-    print("Returning to home position with continuous environment scanning...")
-    
-    -- First, handle Y position
-    while sortingTurtle.position.y > 0 do
-        if not sortingTurtle.moveWithScan("down") then break end
-    end
-    while sortingTurtle.position.y < 0 do
-        if not sortingTurtle.moveWithScan("up") then break end
-    end
-    
-    -- Turn to face the right direction for X movement
-    if sortingTurtle.position.x > 0 then
-        while sortingTurtle.position.facing ~= 3 do  -- Face west
-            sortingTurtle.moveWithScan("turnLeft")
+    if sortingTurtle.numBarrels > 0 then
+        print("\nBarrel Details:")
+        for i, barrel in ipairs(sortingTurtle.barrels) do
+            print(string.format("\nBarrel %d:", i))
+            print(string.format("  Position: %d blocks east", barrel.position))
+            print(string.format("  Block Type: %s", barrel.blockData.name))
+            print(string.format("  Contents: %s", barrel.contents.displayName))
+            print(string.format("  Category: %s", barrel.contents.category))
         end
-    elseif sortingTurtle.position.x < 0 then
-        while sortingTurtle.position.facing ~= 1 do  -- Face east
-            sortingTurtle.moveWithScan("turnLeft")
-        end
-    end
-    
-    -- Move in X direction
-    while sortingTurtle.position.x ~= 0 do
-        if sortingTurtle.position.x > 0 then
-            if not sortingTurtle.moveWithScan("forward") then break end
-        else
-            if not sortingTurtle.moveWithScan("forward") then break end
-        end
-    end
-    
-    -- Turn to face the right direction for Z movement
-    if sortingTurtle.position.z > 0 then
-        while sortingTurtle.position.facing ~= 0 do  -- Face north
-            sortingTurtle.moveWithScan("turnLeft")
-        end
-    elseif sortingTurtle.position.z < 0 then
-        while sortingTurtle.position.facing ~= 2 do  -- Face south
-            sortingTurtle.moveWithScan("turnLeft")
-        end
-    end
-    
-    -- Move in Z direction
-    while sortingTurtle.position.z ~= 0 do
-        if sortingTurtle.position.z > 0 then
-            if not sortingTurtle.moveWithScan("forward") then break end
-        else
-            if not sortingTurtle.moveWithScan("forward") then break end
-        end
-    end
-    
-    -- Face north (default position)
-    while sortingTurtle.position.facing ~= 0 do
-        sortingTurtle.moveWithScan("turnLeft")
-    end
-    
-    if sortingTurtle.position.x == 0 and sortingTurtle.position.y == 0 and 
-       sortingTurtle.position.z == 0 and sortingTurtle.position.facing == 0 then
-        print("Successfully returned home!")
-        return true
     else
-        print("Warning: Could not return to exact home position!")
-        print(string.format("Current position: x=%d, y=%d, z=%d, facing=%d",
-            sortingTurtle.position.x, sortingTurtle.position.y,
-            sortingTurtle.position.z, sortingTurtle.position.facing))
-        return false
+        print("\nNo barrels found! Please set up barrels and restart.")
     end
-end
-
--- Modify moveToBarrel to use scanning
-function sortingTurtle.moveToBarrel(slot)
-    if not sortingTurtle.barrels[slot] then
-        print("Invalid barrel slot: " .. slot)
-        return false
-    end
-    
-    print(string.format("Moving to barrel %d at position %d with continuous scanning", 
-        slot, sortingTurtle.barrels[slot].position))
-    
-    sortingTurtle.moveWithScan("turnRight")
-    for i = 1, sortingTurtle.barrels[slot].position do
-        if not sortingTurtle.moveWithScan("forward") then
-            print("Failed to reach barrel!")
-            return false
-        end
-    end
-    sortingTurtle.moveWithScan("turnLeft")
-    return true
-end
-
--- Modify returnToChest to use scanning
-function sortingTurtle.returnToChest()
-    print("Returning to input chest with continuous scanning...")
-    sortingTurtle.moveWithScan("turnLeft")
-    for i = 1, sortingTurtle.numBarrels do
-        if not sortingTurtle.moveWithScan("back") then
-            print("Warning: Failed to return completely!")
-            break
-        end
-    end
-    sortingTurtle.moveWithScan("turnRight")
 end
 
 -- Function to determine which barrel slot to use based on item name using LLM
