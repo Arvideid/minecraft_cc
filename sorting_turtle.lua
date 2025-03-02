@@ -5,9 +5,9 @@ local llm = require("llm")
 local position = {x = 0, y = 0, z = 0}
 local direction = 0  -- 0: north, 1: east, 2: south, 3: west
 
--- Store the input barrel's position and orientation
-local inputBarrelPosition = {x = 0, y = 0, z = 0}
-local inputBarrelDirection = 0
+-- Store the input chest's position and orientation
+local inputChestPosition = {x = 0, y = 0, z = 0}
+local inputChestDirection = 0
 
 -- Memory for scanned barrels
 local scannedBarrels = {}
@@ -100,8 +100,8 @@ local function checkFuel()
     return true
 end
 
--- Function to get items from a barrel
-local function getBarrelItems()
+-- Function to get items from a chest
+local function getChestItems()
     local items = {}
     for slot = 1, 16 do
         turtle.select(slot)
@@ -142,7 +142,7 @@ local function checkForBarrels360WithMemory()
             if not scannedBarrels[barrelKey] then
                 print("New barrel detected at (" .. position.x .. ", " .. position.y .. ", " .. position.z .. ")")
                 scannedBarrels[barrelKey] = true
-                local items = getBarrelItems()
+                local items = getChestItems()
                 table.insert(barrelItems, items)
             else
                 print("Barrel already scanned at (" .. position.x .. ", " .. position.y .. ", " .. position.z .. ")")
@@ -157,8 +157,8 @@ local function senseEnvironmentAndStoreInputChest()
     local frontSuccess, frontData = turtle.inspect()
     if frontSuccess and frontData.name == "minecraft:chest" then
         print("Input chest detected at front.")
-        inputBarrelPosition = {x = position.x, y = position.y, z = position.z}
-        inputBarrelDirection = direction
+        inputChestPosition = {x = position.x, y = position.y, z = position.z}
+        inputChestDirection = direction
     end
     local belowSuccess, belowData = turtle.inspectDown()
     local aboveSuccess, aboveData = turtle.inspectUp()
@@ -166,12 +166,12 @@ local function senseEnvironmentAndStoreInputChest()
     print("Above: " .. (aboveSuccess and aboveData.name or "none"))
 end
 
--- Function to navigate around the input barrel
-local function navigateAroundInputBarrel()
+-- Function to navigate around the input chest
+local function navigateAroundInputChest()
     -- Turn around to explore other barrels
     turnRight()
     turnRight()
-    print("Navigating around the input barrel.")
+    print("Navigating around the input chest.")
 end
 
 -- Function to set the initial state
@@ -276,11 +276,11 @@ local function controlTurtle()
                     firstRun = false
                 end
                 -- Scan the input chest
-                if position.x == inputBarrelPosition.x and position.y == inputBarrelPosition.y and position.z == inputBarrelPosition.z then
-                    inputItems = getBarrelItems()
+                if position.x == inputChestPosition.x and position.y == inputChestPosition.y and position.z == inputChestPosition.z then
+                    inputItems = getChestItems()
                 end
                 if #inputItems > 0 then
-                    navigateAroundInputBarrel()
+                    navigateAroundInputChest()
                     currentState = states.SORTING
                 else
                     print("No items in input chest.")
