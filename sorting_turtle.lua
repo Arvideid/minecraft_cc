@@ -19,6 +19,10 @@ local barrelItems = {}
 local initialPosition = {x = 0, y = 0, z = 0}
 local initialDirection = 0
 
+-- Define states
+local states = {SCANNING = 1, SORTING = 2, RETURNING = 3}
+local currentState = states.SCANNING
+
 -- Function to update position based on direction
 local function updatePosition()
     if direction == 0 then
@@ -116,8 +120,11 @@ local function placeItemsInBarrel(items)
             turtle.select(slot)
             local itemDetail = turtle.getItemDetail()
             if itemDetail and itemDetail.name == item then
-                turtle.drop()
-                print("Placed " .. itemDetail.count .. " of " .. itemDetail.name)
+                if turtle.drop() then
+                    print("Placed " .. itemDetail.count .. " of " .. itemDetail.name)
+                else
+                    print("Failed to place " .. itemDetail.name)
+                end
                 break
             end
         end
@@ -213,7 +220,8 @@ local function tryMoveForward()
         print("Obstacle detected, attempting to clear...")
         turtle.dig()
         if not turtle.forward() then
-            print("Still cannot move forward.")
+            print("Still cannot move forward. Returning to initial state.")
+            returnToInitialState()
             return false
         end
     end
@@ -256,20 +264,27 @@ local function controlTurtle()
             print("Please refuel the turtle.")
             os.sleep(2)
         else
-            -- Sense the environment and store input barrel position
-            senseEnvironmentAndStoreInputBarrel()
-            -- Set initial state on first run
-            if firstRun then
-                setInitialState()
-                firstRun = false
-            end
-            -- Scan the input barrel
-            local inputItems = getBarrelItems()
-            if #inputItems > 0 then
-                navigateAroundInputBarrel()
+            if currentState == states.SCANNING then
+                -- Sense the environment and store input barrel position
+                senseEnvironmentAndStoreInputBarrel()
+                -- Set initial state on first run
+                if firstRun then
+                    setInitialState()
+                    firstRun = false
+                end
+                -- Scan the input barrel
+                local inputItems = getBarrelItems()
+                if #inputItems > 0 then
+                    navigateAroundInputBarrel()
+                    currentState = states.SORTING
+                else
+                    print("No items in input barrel.")
+                    currentState = states.RETURNING
+                end
+            elseif currentState == states.SORTING then
                 checkAndSortItems(inputItems)
-            else
-                print("No items in input barrel.")
+                currentState = states.RETURNING
+            elseif currentState == states.RETURNING then
                 returnToInitialState()
                 break
             end
