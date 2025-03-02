@@ -14,7 +14,8 @@ sortingTurtle.config = {
         ["minecraft:charcoal"] = true,
         ["minecraft:coal_block"] = true,
         ["minecraft:lava_bucket"] = true
-    }
+    },
+    INITIAL_FUEL_CHECK = true  -- Flag to track if initial fuel check has been done
 }
 
 -- Store information about discovered barrels
@@ -34,9 +35,6 @@ sortingTurtle.environment = {
 function sortingTurtle.isBarrel()
     local success, data = turtle.inspect()
     if success and data then
-        -- Print detected block for debugging
-        print("Detected block:", data.name)
-        -- Check for various barrel types
         return data.name == "minecraft:barrel" or 
                data.name:find("barrel") or 
                data.name:find("storage")
@@ -102,7 +100,12 @@ function sortingTurtle.checkFuel()
     local fuelLevel = turtle.getFuelLevel()
     if fuelLevel == "unlimited" then return true end
     
-    print(string.format("Current fuel level: %d", fuelLevel))
+    -- Only print fuel level during initial check
+    if sortingTurtle.config.INITIAL_FUEL_CHECK then
+        print(string.format("Initial fuel level: %d", fuelLevel))
+        sortingTurtle.config.INITIAL_FUEL_CHECK = false
+    end
+    
     if fuelLevel < sortingTurtle.config.MIN_FUEL_LEVEL then
         print("Fuel level low, attempting to refuel...")
         -- Check inventory for fuel items
@@ -111,7 +114,7 @@ function sortingTurtle.checkFuel()
             local item = turtle.getItemDetail()
             if item and sortingTurtle.config.FUEL_ITEMS[item.name] then
                 if turtle.refuel(1) then
-                    print(string.format("Refueled with %s. New level: %d", item.name, turtle.getFuelLevel()))
+                    print(string.format("Refueled with %s", item.name))
                     return true
                 end
             end
@@ -180,7 +183,7 @@ function sortingTurtle.updatePosition(movement)
     end
 end
 
--- Enhanced movement functions with position tracking and obstacle detection
+-- Optimized movement function with minimal scanning
 function sortingTurtle.safeMove(movement)
     if not sortingTurtle.checkFuel() then
         print("Cannot move: Insufficient fuel!")
@@ -207,10 +210,8 @@ function sortingTurtle.safeMove(movement)
     if success then
         sortingTurtle.updatePosition(movement)
         return true
-    else
-        print(string.format("Movement failed: %s", movement))
-        return false
     end
+    return false
 end
 
 -- Function to return to home position
@@ -460,9 +461,9 @@ function sortingTurtle.moveWithScan(movement)
     return success
 end
 
--- Modify the scanBarrels function to use enhanced movement and scanning
+-- Optimized scan function that only scans when necessary
 function sortingTurtle.scanBarrels()
-    print("\n=== Starting Enhanced Barrel Scan ===")
+    print("\n=== Starting Barrel Scan ===")
     sortingTurtle.barrels = {}
     sortingTurtle.numBarrels = 0
     local steps = 0
@@ -473,97 +474,50 @@ function sortingTurtle.scanBarrels()
         return
     end
     
-    -- Initial scan at starting position
-    print("Performing initial scan...")
-    local scan = sortingTurtle.scan360()
-    
     -- Turn right to start scanning
     turtle.turnRight()
     sortingTurtle.updatePosition("turnRight")
     
-    -- First pass: Move forward and count barrels
-    print("First pass: Scanning for barrels...")
+    -- Single pass: Move forward and scan barrels
+    print("Scanning for barrels...")
     while steps < sortingTurtle.config.MAX_STEPS do
         -- Check what's in front
         local success, data = turtle.inspect()
         if success and data then
             if string.find(data.name or "", "barrel") or string.find(data.name or "", "storage") then
                 steps = steps + 1
-                print(string.format("Found barrel at position %d (%s)", steps, data.name))
                 
+                -- Read barrel contents immediately
+                local contents = sortingTurtle.readBarrel()
                 table.insert(sortingTurtle.barrels, {
                     position = steps,
-                    contents = {
-                        name = "unknown",
-                        displayName = "unknown",
-                        category = "unknown"
-                    },
+                    contents = contents,
                     blockData = data
                 })
                 sortingTurtle.numBarrels = sortingTurtle.numBarrels + 1
+                print(string.format("Found barrel %d: %s (%s)", 
+                    sortingTurtle.numBarrels, 
+                    contents.displayName or "empty",
+                    contents.category or "none"))
             end
         end
         
         -- Try to move forward
-        if not sortingTurtle.moveWithScan("forward") then
-            print("Path blocked at step " .. steps)
+        if not turtle.forward() then
             break
         end
+        sortingTurtle.updatePosition("forward")
         steps = steps + 1
     end
     
     -- Return to start
-    print("\nReturning to home position...")
     sortingTurtle.returnHome()
-    
-    -- If we found barrels, do a second pass to read contents
-    if sortingTurtle.numBarrels > 0 then
-        print("\nSecond pass: Reading barrel contents...")
-        turtle.turnRight()
-        sortingTurtle.updatePosition("turnRight")
-        
-        for i = 1, sortingTurtle.numBarrels do
-            -- Move to barrel
-            for j = 1, sortingTurtle.barrels[i].position do
-                if not turtle.forward() then
-                    print("Error reaching barrel " .. i)
-                    break
-                end
-                sortingTurtle.updatePosition("forward")
-            end
-            
-            -- Read contents
-            print(string.format("Reading barrel %d contents...", i))
-            local contents = sortingTurtle.readBarrel()
-            sortingTurtle.barrels[i].contents = contents
-            print(string.format("Barrel %d contains: %s (%s)", 
-                i, 
-                contents.displayName or "empty", 
-                contents.category or "none"))
-            
-            -- Return to start
-            sortingTurtle.returnHome()
-            if i < sortingTurtle.numBarrels then
-                turtle.turnRight()
-                sortingTurtle.updatePosition("turnRight")
-            end
-        end
-    end
     
     sortingTurtle.lastScanTime = os.epoch("local")
     
     -- Print barrel summary
-    print("\n=== Barrel Scan Summary ===")
-    print(string.format("Found %d barrels", sortingTurtle.numBarrels))
     if sortingTurtle.numBarrels > 0 then
-        print("\nBarrel Details:")
-        for i, barrel in ipairs(sortingTurtle.barrels) do
-            print(string.format("\nBarrel %d:", i))
-            print(string.format("  Position: %d blocks east", barrel.position))
-            print(string.format("  Block Type: %s", barrel.blockData.name))
-            print(string.format("  Contents: %s", barrel.contents.displayName))
-            print(string.format("  Category: %s", barrel.contents.category))
-        end
+        print(string.format("\nFound %d barrels", sortingTurtle.numBarrels))
     else
         print("\nNo barrels found! Please set up barrels and restart.")
     end
@@ -618,20 +572,16 @@ Number:]],
     return nil
 end
 
--- Function to move items from input chest to barrels
+-- Optimized sort items function
 function sortingTurtle.sortItems()
     -- Check if we need to rescan barrels
     local currentTime = os.epoch("local")
     if sortingTurtle.numBarrels == 0 or 
        (currentTime - sortingTurtle.lastScanTime) > sortingTurtle.config.SCAN_INTERVAL then
         sortingTurtle.scanBarrels()
-        if sortingTurtle.numBarrels == 0 then
-            print("No barrels found! Please set up barrels and restart.")
-            return
-        end
+        if sortingTurtle.numBarrels == 0 then return end
     end
     
-    print("\nChecking input chest...")
     -- Move to the input chest
     if not turtle.forward() then
         print("Cannot reach input chest!")
@@ -639,58 +589,52 @@ function sortingTurtle.sortItems()
     end
 
     -- Check each slot in the turtle's inventory
+    local itemsMoved = false
     for slot = 1, 16 do
         turtle.select(slot)
-        if turtle.suck() then  -- Attempt to take items from the chest
+        if turtle.suck() then
             local itemDetail = turtle.getItemDetail()
             if itemDetail then
                 local itemCategory = sortingTurtle.getItemCategory(itemDetail.name)
-                print(string.format("\nProcessing: %s (Category: %s)", 
-                    itemDetail.displayName or "unknown", 
-                    itemCategory))
-                
-                -- Determine which barrel to place the item in
                 local barrelSlot = sortingTurtle.getBarrelSlot(itemDetail.name, itemCategory)
+                
                 if barrelSlot then
-                    print("Moving to barrel " .. barrelSlot)
-                    -- Move to the correct barrel
+                    -- Move to barrel and drop item
                     sortingTurtle.moveToBarrel(barrelSlot)
-                    -- Place the item in the barrel
                     if turtle.drop() then
-                        print("Successfully placed item in barrel " .. barrelSlot)
+                        itemsMoved = true
                         -- Update barrel contents in memory
                         sortingTurtle.barrels[barrelSlot].contents = {
                             name = itemDetail.name,
                             displayName = itemDetail.displayName,
                             category = itemCategory
                         }
-                    else
-                        print("Failed to place item in barrel " .. barrelSlot)
                     end
                     -- Return to the input chest
                     sortingTurtle.returnToChest()
                 else
-                    print("No suitable barrel found, returning item to chest")
-                    -- Drop item back in chest
+                    -- Return item to chest if no suitable barrel
                     turtle.drop()
                 end
             end
         end
     end
     
-    -- Return to starting position
-    if not turtle.back() then
-        print("Warning: Could not return to starting position!")
+    -- Only print status if items were actually moved
+    if itemsMoved then
+        print("Items sorted successfully")
     end
+    
+    -- Return to starting position
+    turtle.back()
 end
 
 -- Main loop
-print("=== Smart Sorting Turtle v2.1 ===")
+print("=== Smart Sorting Turtle v2.2 ===")
 print("Setup Instructions:")
 print("1. Place turtle in front of input chest")
 print("2. Place barrels in a line to the right")
 print("3. Ensure all barrels are accessible")
-print("\nStarting initial barrel scan...")
 
 -- Do initial barrel scan
 sortingTurtle.scanBarrels()
@@ -701,11 +645,10 @@ if sortingTurtle.numBarrels == 0 then
 end
 
 print("\nReady to sort items!")
-print("Monitoring input chest...")
 
 while true do
     sortingTurtle.sortItems()
-    os.sleep(5)  -- Wait for a few seconds before checking again
+    os.sleep(5)
 end
 
 return sortingTurtle
