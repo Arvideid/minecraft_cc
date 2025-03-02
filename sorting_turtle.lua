@@ -68,22 +68,33 @@ local function controlTurtle()
             os.sleep(2)
         else
             -- Use LLM to decide what to do
-            local prompt = "The turtle is ready to move. Provide a single-word command: forward, left, right, or stop."
+            local prompt = "The turtle is ready to move. Provide a command in the format 'action: steps', where action is forward, left, right, or stop."
             local response = llm.getGeminiResponse(prompt)
             if response then
+                response = response:match("^%s*(.-)%s*$")  -- Trim whitespace
                 print("LLM response: " .. response)
-                -- Implement actions based on LLM response
-                if response == "forward" then
-                    moveForward()
-                elseif response == "left" then
-                    turnLeft()
-                elseif response == "right" then
-                    turnRight()
-                elseif response == "stop" then
-                    print("Stopping turtle.")
-                    break
+                -- Parse the response
+                local action, steps = response:match("^(%a+)%s*:%s*(%d+)$")
+                steps = tonumber(steps)
+                if action and steps then
+                    -- Implement actions based on LLM response
+                    for i = 1, steps do
+                        if action == "forward" then
+                            moveForward()
+                        elseif action == "left" then
+                            turnLeft()
+                        elseif action == "right" then
+                            turnRight()
+                        elseif action == "stop" then
+                            print("Stopping turtle.")
+                            return
+                        else
+                            print("Unknown command from LLM.")
+                            break
+                        end
+                    end
                 else
-                    print("Unknown command from LLM.")
+                    print("Invalid response format from LLM.")
                 end
             else
                 print("No response from LLM.")
