@@ -9,6 +9,9 @@ local direction = 0  -- 0: north, 1: east, 2: south, 3: west
 local inputBarrelPosition = {x = 0, y = 0, z = 0}
 local inputBarrelDirection = 0
 
+-- Memory for scanned barrels
+local scannedBarrels = {}
+
 -- Function to update position based on direction
 local function updatePosition()
     if direction == 0 then
@@ -114,16 +117,22 @@ local function placeItemsInBarrel(items)
     end
 end
 
--- Function to perform a 360-degree check for barrels
-local function checkForBarrels360()
-    local barrelsDetected = {}
+-- Function to perform a 360-degree check for barrels and remember them
+local function checkForBarrels360WithMemory()
     for i = 1, 4 do
         if checkForBarrel() then
-            table.insert(barrelsDetected, {x = position.x, y = position.y, z = position.z, direction = direction})
+            local barrelKey = position.x .. "," .. position.y .. "," .. position.z
+            if not scannedBarrels[barrelKey] then
+                print("New barrel detected at (" .. position.x .. ", " .. position.y .. ", " .. position.z .. ")")
+                scannedBarrels[barrelKey] = true
+                local items = getBarrelItems()
+                table.insert(barrelItems, items)
+            else
+                print("Barrel already scanned at (" .. position.x .. ", " .. position.y .. ", " .. position.z .. ")")
+            end
         end
         turnRight()
     end
-    return barrelsDetected
 end
 
 -- Function to check and sort items
@@ -132,14 +141,8 @@ local function checkAndSortItems(inputItems)
 
     -- Iterate over barrels
     for i = 1, 4 do  -- Example: check 4 barrels
-        local detectedBarrels = checkForBarrels360()
-        for _, barrel in ipairs(detectedBarrels) do
-            moveForward()
-            if checkForBarrel() then
-                local items = getBarrelItems()
-                table.insert(barrelItems, items)
-            end
-        end
+        checkForBarrels360WithMemory()
+        moveForward()
     end
 
     -- Use LLM to decide what to do with the items
