@@ -3,6 +3,13 @@
 -- Your Gemini API key
 local apiKey = "AIzaSyBovnTYV5SFtsB-Gk5RAQjjPFFKpsZ5SCw"  -- Replace with your actual API key
 
+-- Function to log messages to a file
+local function logToFile(message)
+    local file = fs.open("gemini_api_log.txt", "a")
+    file.writeLine(message)
+    file.close()
+end
+
 -- Function to send a prompt to the Gemini API and get a response
 function getGeminiResponse(prompt)
     local url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" .. apiKey
@@ -19,17 +26,17 @@ function getGeminiResponse(prompt)
         }
     })
 
-    print("Sending request to Gemini API...")
-    print("URL: " .. url)
-    print("Headers: " .. textutils.serialize(headers))
-    print("Body: " .. body)
+    logToFile("Sending request to Gemini API...")
+    logToFile("URL: " .. url)
+    logToFile("Headers: " .. textutils.serialize(headers))
+    logToFile("Body: " .. body)
 
     local response, err = http.post(url, body, headers)
     if response then
         local content = response.readAll()
         response.close()
-        print("Received response from Gemini API.")
-        print("Raw response content: " .. content)
+        logToFile("Received response from Gemini API.")
+        logToFile("Raw response content: " .. content)
 
         local data = textutils.unserializeJSON(content)
         
@@ -37,13 +44,13 @@ function getGeminiResponse(prompt)
         if data and data.contents and #data.contents > 0 and data.contents[1].parts and #data.contents[1].parts > 0 then
             return data.contents[1].parts[1].text
         else
-            print("Unexpected response structure.")
+            logToFile("Unexpected response structure.")
             return nil
         end
     else
-        print("Failed to fetch data from Gemini API")
+        logToFile("Failed to fetch data from Gemini API")
         if err then
-            print("Error: " .. err)
+            logToFile("Error: " .. err)
         end
         return nil
     end
