@@ -114,16 +114,31 @@ local function placeItemsInBarrel(items)
     end
 end
 
+-- Function to perform a 360-degree check for barrels
+local function checkForBarrels360()
+    local barrelsDetected = {}
+    for i = 1, 4 do
+        if checkForBarrel() then
+            table.insert(barrelsDetected, {x = position.x, y = position.y, z = position.z, direction = direction})
+        end
+        turnRight()
+    end
+    return barrelsDetected
+end
+
 -- Function to check and sort items
 local function checkAndSortItems(inputItems)
     local barrelItems = {}
 
     -- Iterate over barrels
     for i = 1, 4 do  -- Example: check 4 barrels
-        moveForward()
-        if checkForBarrel() then
-            local items = getBarrelItems()
-            table.insert(barrelItems, items)
+        local detectedBarrels = checkForBarrels360()
+        for _, barrel in ipairs(detectedBarrels) do
+            moveForward()
+            if checkForBarrel() then
+                local items = getBarrelItems()
+                table.insert(barrelItems, items)
+            end
         end
     end
 
