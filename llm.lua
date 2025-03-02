@@ -24,6 +24,10 @@ function getGeminiResponse(prompt)
         local content = response.readAll()
         response.close()
         local data = textutils.unserializeJSON(content)
+        
+        -- Print the raw response content for debugging
+        print("Raw response content: " .. content)
+        
         -- Adjust based on the actual response structure
         if data and data.contents and #data.contents > 0 and data.contents[1].parts and #data.contents[1].parts > 0 then
             return data.contents[1].parts[1].text
