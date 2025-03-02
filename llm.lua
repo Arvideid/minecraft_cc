@@ -19,14 +19,19 @@ function getGeminiResponse(prompt)
         }
     })
 
+    print("Sending request to Gemini API...")
+    print("URL: " .. url)
+    print("Headers: " .. textutils.serialize(headers))
+    print("Body: " .. body)
+
     local response, err = http.post(url, body, headers)
     if response then
         local content = response.readAll()
         response.close()
-        local data = textutils.unserializeJSON(content)
-        
-        -- Print the raw response content for debugging
+        print("Received response from Gemini API.")
         print("Raw response content: " .. content)
+
+        local data = textutils.unserializeJSON(content)
         
         -- Adjust based on the actual response structure
         if data and data.contents and #data.contents > 0 and data.contents[1].parts and #data.contents[1].parts > 0 then
