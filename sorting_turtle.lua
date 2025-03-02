@@ -276,7 +276,9 @@ local function controlTurtle()
                     firstRun = false
                 end
                 -- Scan the input chest
-                inputItems = getBarrelItems()
+                if position.x == inputBarrelPosition.x and position.y == inputBarrelPosition.y and position.z == inputBarrelPosition.z then
+                    inputItems = getBarrelItems()
+                end
                 if #inputItems > 0 then
                     navigateAroundInputBarrel()
                     currentState = states.SORTING
