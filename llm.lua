@@ -1,7 +1,7 @@
 -- Ensure HTTP is enabled in the ComputerCraft configuration
 
 -- Your Gemini API key
-local apiKey = "AIzaSyDOWgiyrW8fLhFzefEB5-TH2eQOgAsGiXo"
+local apiKey = "AIzaSyBovnTYV5SFtsB-Gk5RAQjjPFFKpsZ5SCw"
 
 -- Function to send a prompt to the Gemini API and get a response
 function getGeminiResponse(prompt)
