@@ -59,6 +59,44 @@ local function checkFuel()
     return true
 end
 
+-- Function to get items from a barrel
+local function getBarrelItems()
+    local success, data = turtle.inspect()
+    if success and data.name == "minecraft:barrel" then
+        print("Barrel detected. Scanning items...")
+        -- Simulate getting items (replace with actual logic if needed)
+        return {"item1", "item2", "item3"}
+    else
+        print("No barrel detected.")
+        return {}
+    end
+end
+
+-- Function to check and sort items
+local function checkAndSortItems(inputItems)
+    -- Turn to check side barrels
+    turnLeft()
+    local leftItems = getBarrelItems()
+    turnRight()
+    turnRight()
+    local rightItems = getBarrelItems()
+    turnLeft()
+
+    -- Use LLM to decide what to do with the items
+    local prompt = "Input items: " .. table.concat(inputItems, ", ") .. ". " ..
+                   "Left barrel items: " .. table.concat(leftItems, ", ") .. ". " ..
+                   "Right barrel items: " .. table.concat(rightItems, ", ") .. ". " ..
+                   "Decide which items to move to the side barrels."
+    local response = llm.getGeminiResponse(prompt)
+    if response then
+        print("LLM response: " .. response)
+        -- Implement logic to move items based on LLM response
+        -- (This part will depend on the response format and your specific requirements)
+    else
+        print("No response from LLM.")
+    end
+end
+
 -- Main function to control the turtle
 local function controlTurtle()
     while true do
@@ -67,37 +105,12 @@ local function controlTurtle()
             print("Please refuel the turtle.")
             os.sleep(2)
         else
-            -- Use LLM to decide what to do
-            local prompt = "The turtle is ready to move. Provide a command in the format 'action: steps', where action is forward, left, right, or stop."
-            local response = llm.getGeminiResponse(prompt)
-            if response then
-                response = response:match("^%s*(.-)%s*$")  -- Trim whitespace
-                print("LLM response: " .. response)
-                -- Parse the response
-                local action, steps = response:match("^(%a+)%s*:%s*(%d+)$")
-                steps = tonumber(steps)
-                if action and steps then
-                    -- Implement actions based on LLM response
-                    for i = 1, steps do
-                        if action == "forward" then
-                            moveForward()
-                        elseif action == "left" then
-                            turnLeft()
-                        elseif action == "right" then
-                            turnRight()
-                        elseif action == "stop" then
-                            print("Stopping turtle.")
-                            return
-                        else
-                            print("Unknown command from LLM.")
-                            break
-                        end
-                    end
-                else
-                    print("Invalid response format from LLM.")
-                end
+            -- Scan the input barrel
+            local inputItems = getBarrelItems()
+            if #inputItems > 0 then
+                checkAndSortItems(inputItems)
             else
-                print("No response from LLM.")
+                print("No items in input barrel.")
             end
         end
 
