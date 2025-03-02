@@ -3,8 +3,11 @@
 -- Your Gemini API key
 local apiKey = "AIzaSyBovnTYV5SFtsB-Gk5RAQjjPFFKpsZ5SCw"  -- Replace with your actual API key
 
+-- Define a module table
+local llm = {}
+
 -- Function to send a prompt to the Gemini API and get a response
-function getGeminiResponse(prompt)
+function llm.getGeminiResponse(prompt)
     local url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" .. apiKey
     local headers = {
         ["Content-Type"] = "application/json"
@@ -51,7 +54,11 @@ function getGeminiResponse(prompt)
     end
 end
 
+-- Return the module table
+return llm
+
 -- Main interactive loop
+--[[
 while true do
     -- Ask the user for a prompt
     print("Enter your prompt (or type 'exit' to quit):")
@@ -63,10 +70,11 @@ while true do
     end
 
     -- Get the response from the Gemini API
-    local response = getGeminiResponse(userPrompt)
+    local response = llm.getGeminiResponse(userPrompt)
     if response then
         print("Gemini API response: " .. response)
     else
         print("No response received.")
     end
 end
+]]
