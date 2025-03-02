@@ -34,8 +34,14 @@ function getGeminiResponse(prompt)
         local data = textutils.unserializeJSON(content)
         
         -- Adjust based on the actual response structure
-        if data and data.text then
-            return data.text
+        if data and data.candidates and #data.candidates > 0 then
+            local candidate = data.candidates[1]
+            if candidate.content and candidate.content.parts and #candidate.content.parts > 0 then
+                return candidate.content.parts[1].text
+            else
+                print("Unexpected response structure.")
+                return nil
+            end
         else
             print("Unexpected response structure.")
             return nil
