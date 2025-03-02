@@ -665,31 +665,48 @@ function sortingTurtle.getBarrelSlot(itemName, itemCategory)
         return nil
     end
 
-    -- Create a detailed context for the LLM
-    local barrelContext = "Current barrel contents:\n"
+    -- Create a detailed context for the LLM with better formatting
+    local barrelContext = "Current barrel setup:\n"
     for i, barrel in ipairs(sortingTurtle.barrels) do
-        barrelContext = barrelContext .. string.format("Barrel %d: %s (category: %s)\n", 
-            i, 
-            barrel.contents.displayName or "empty", 
-            barrel.contents.category or "none")
+        local contents = barrel.contents
+        local status = contents.name == "empty" and "EMPTY" or 
+                      string.format("Contains: %s (Type: %s, Category: %s)", 
+                          contents.displayName,
+                          contents.name,
+                          contents.category)
+        barrelContext = barrelContext .. string.format("Barrel %d: %s\n", i, status)
     end
     
-    -- Construct a more specific prompt
+    -- Construct a more specific and detailed prompt
     local prompt = string.format([[
-Return ONLY a number between 1 and %d.
-Item to sort: "%s" (category: %s)
-%s
-Rules:
-- If exact item match exists, use that barrel number
-- If empty barrel exists, use first empty barrel
-- If similar category exists, use that barrel
-- ONLY return the number, no other text
+Task: Determine the best barrel (1-%d) for storing an item.
 
-Number:]], 
+Item Details:
+- Name: %s
+- Category: %s
+
+%s
+
+Selection Rules (in priority order):
+1. EXACT MATCH: If a barrel already contains this exact item (matching name), use that barrel
+2. EMPTY BARREL: If there's an empty barrel, use the first empty one
+3. CATEGORY MATCH: If a barrel contains items of the same category, use that barrel
+4. SMART GROUPING: If no category match, try to group similar items (e.g., all building blocks together)
+
+Additional Guidelines:
+- Each barrel should maintain a consistent type of items
+- Avoid mixing different categories unless necessary
+- Consider item relationships (e.g., keep crafting ingredients near their products)
+- If multiple matches exist, prefer the lowest barrel number
+
+Return ONLY a single number between 1 and %d. No explanation needed.
+
+Selected Barrel Number:]], 
         sortingTurtle.numBarrels,
-        itemName, 
+        itemName,
         itemCategory,
-        barrelContext)
+        barrelContext,
+        sortingTurtle.numBarrels)
 
     local response = llm.getGeminiResponse(prompt)
     
