@@ -34,36 +34,48 @@ local function checkForBarrel()
     end
 end
 
+-- Function to check fuel level and refuel if needed
+local function checkFuel()
+    if turtle.getFuelLevel() == 0 then
+        print("Out of fuel!")
+        return false
+    end
+    return true
+end
+
 -- Main function to control the turtle
 local function controlTurtle()
     while true do
-        -- Check for a barrel
-        if checkForBarrel() then
+        -- Check fuel level
+        if not checkFuel() then
+            print("Please refuel the turtle.")
+            os.sleep(2)
+        else
             -- Use LLM to decide what to do
-            local prompt = "A barrel is detected. What should the turtle do?"
+            local prompt = "The turtle is ready to move. Provide a single-word command: forward, left, right, or stop."
             local response = llm.getGeminiResponse(prompt)
             if response then
                 print("LLM response: " .. response)
                 -- Implement actions based on LLM response
-                -- For simplicity, let's assume the response is a simple command like "move forward"
-                if response == "move forward" then
+                if response == "forward" then
                     moveForward()
-                elseif response == "turn left" then
+                elseif response == "left" then
                     turnLeft()
-                elseif response == "turn right" then
+                elseif response == "right" then
                     turnRight()
+                elseif response == "stop" then
+                    print("Stopping turtle.")
+                    break
                 else
                     print("Unknown command from LLM.")
                 end
             else
                 print("No response from LLM.")
             end
-        else
-            -- Default action if no barrel is detected
-            moveForward()
         end
-        -- Add a small delay to prevent spamming
-        os.sleep(1)
+
+        -- Add a delay to prevent spamming
+        os.sleep(2)
     end
 end
 
