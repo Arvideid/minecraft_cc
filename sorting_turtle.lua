@@ -15,6 +15,10 @@ local scannedBarrels = {}
 -- Global table to store items from barrels
 local barrelItems = {}
 
+-- Store the initial position and direction
+local initialPosition = {x = 0, y = 0, z = 0}
+local initialDirection = 0
+
 -- Function to update position based on direction
 local function updatePosition()
     if direction == 0 then
@@ -196,8 +200,42 @@ local function navigateAroundInputBarrel()
     print("Navigating around the input barrel.")
 end
 
+-- Function to set the initial state
+local function setInitialState()
+    initialPosition = {x = position.x, y = position.y, z = position.z}
+    initialDirection = direction
+    print("Initial state set at position (" .. initialPosition.x .. ", " .. initialPosition.y .. ", " .. initialPosition.z .. ") facing direction " .. initialDirection)
+end
+
+-- Function to return to the initial state
+local function returnToInitialState()
+    print("Returning to initial state...")
+    -- Navigate back to the initial position
+    while position.x ~= initialPosition.x or position.z ~= initialPosition.z do
+        if position.x < initialPosition.x then
+            while direction ~= 1 do turnRight() end
+            moveForward()
+        elseif position.x > initialPosition.x then
+            while direction ~= 3 do turnRight() end
+            moveForward()
+        elseif position.z < initialPosition.z then
+            while direction ~= 0 do turnRight() end
+            moveForward()
+        elseif position.z > initialPosition.z then
+            while direction ~= 2 do turnRight() end
+            moveForward()
+        end
+    end
+    -- Adjust to the initial direction
+    while direction ~= initialDirection do
+        turnRight()
+    end
+    print("Returned to initial state at position (" .. position.x .. ", " .. position.y .. ", " .. position.z .. ") facing direction " .. direction)
+end
+
 -- Main function to control the turtle
 local function controlTurtle()
+    local firstRun = true
     while true do
         -- Check fuel level
         if not checkFuel() then
@@ -206,6 +244,11 @@ local function controlTurtle()
         else
             -- Sense the environment and store input barrel position
             senseEnvironmentAndStoreInputBarrel()
+            -- Set initial state on first run
+            if firstRun then
+                setInitialState()
+                firstRun = false
+            end
             -- Scan the input barrel
             local inputItems = getBarrelItems()
             if #inputItems > 0 then
@@ -213,6 +256,8 @@ local function controlTurtle()
                 checkAndSortItems(inputItems)
             else
                 print("No items in input barrel.")
+                returnToInitialState()
+                break
             end
         end
 
