@@ -371,7 +371,7 @@ function sortingTurtle.analyzeSurroundings()
     
     -- Helper function to categorize a block
     local function categorizeBlock(block, direction, distance)
-        if not block then return end
+        if not block or not block.name then return end  -- Add nil check for block and block.name
         
         local info = {
             name = block.name,
@@ -394,16 +394,22 @@ function sortingTurtle.analyzeSurroundings()
         end
     end
     
-    -- Analyze each direction
+    -- Analyze each direction with nil checks
     for direction, data in pairs(scan) do
-        if direction ~= "up" and direction ~= "down" and data.block then
-            categorizeBlock(data.block, direction)
+        if direction ~= "up" and direction ~= "down" then
+            if type(data) == "table" and data.block then  -- Add type check
+                categorizeBlock(data.block, direction)
+            end
         end
     end
     
-    -- Analyze up/down
-    if scan.upBlock then categorizeBlock(scan.upBlock, "up") end
-    if scan.downBlock then categorizeBlock(scan.downBlock, "down") end
+    -- Analyze up/down with nil checks
+    if scan.upBlock then 
+        categorizeBlock(scan.upBlock, "up") 
+    end
+    if scan.downBlock then 
+        categorizeBlock(scan.downBlock, "down") 
+    end
     
     return findings
 end
