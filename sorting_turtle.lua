@@ -463,11 +463,14 @@ end
 
 -- Function to move to a specific barrel position
 function sortingTurtle.moveToBarrel(barrelNumber)
-    -- Turn right to face the barrels if not already facing them
-    if sortingTurtle.position.facing ~= 1 then  -- 1 is east (right)
-        while sortingTurtle.position.facing ~= 1 do
-            turtle.turnRight()
-            sortingTurtle.updatePosition("turnRight")
+    -- Back away from chest first
+    turtle.back()
+    
+    -- Turn left to face the barrels if not already facing them
+    if sortingTurtle.position.facing ~= 3 then  -- 3 is west (left)
+        while sortingTurtle.position.facing ~= 3 do
+            turtle.turnLeft()
+            sortingTurtle.updatePosition("turnLeft")
         end
     end
     
@@ -488,14 +491,14 @@ end
 
 -- Function to return to the input chest
 function sortingTurtle.returnToChest()
-    -- Turn around to face west (opposite of barrels)
-    while sortingTurtle.position.facing ~= 3 do  -- 3 is west (left)
-        turtle.turnRight()
-        sortingTurtle.updatePosition("turnRight")
+    -- Turn around to face east (opposite of barrels)
+    while sortingTurtle.position.facing ~= 1 do  -- 1 is east (right)
+        turtle.turnLeft()
+        sortingTurtle.updatePosition("turnLeft")
     end
     
-    -- Move back to the chest
-    while sortingTurtle.position.x > 0 do
+    -- Move back to the chest position
+    while sortingTurtle.position.x < 0 do
         if turtle.forward() then
             sortingTurtle.updatePosition("forward")
         else
@@ -505,9 +508,12 @@ function sortingTurtle.returnToChest()
     
     -- Turn to face the chest (north)
     while sortingTurtle.position.facing ~= 0 do
-        turtle.turnRight()
-        sortingTurtle.updatePosition("turnRight")
+        turtle.turnLeft()
+        sortingTurtle.updatePosition("turnLeft")
     end
+    
+    -- Move forward to the chest
+    turtle.forward()
 end
 
 -- Optimized scan function that only scans in the direction of barrels
@@ -523,10 +529,13 @@ function sortingTurtle.scanBarrels()
         return
     end
     
-    -- Turn right to face the barrels
-    while sortingTurtle.position.facing ~= 1 do  -- 1 is east (right)
-        turtle.turnRight()
-        sortingTurtle.updatePosition("turnRight")
+    -- Back away from chest
+    turtle.back()
+    
+    -- Turn left to face the barrels
+    while sortingTurtle.position.facing ~= 3 do  -- 3 is west (left)
+        turtle.turnLeft()
+        sortingTurtle.updatePosition("turnLeft")
     end
     
     -- Single pass: Move forward and scan barrels
@@ -685,10 +694,10 @@ function sortingTurtle.sortItems()
 end
 
 -- Main loop
-print("=== Smart Sorting Turtle v2.2 ===")
+print("=== Smart Sorting Turtle v2.3 ===")
 print("Setup Instructions:")
-print("1. Place turtle in front of input chest")
-print("2. Place barrels in a line to the right")
+print("1. Place turtle behind input chest, facing the chest")
+print("2. Place barrels in a line to the left of the chest")
 print("3. Ensure all barrels are accessible")
 
 -- Do initial barrel scan
