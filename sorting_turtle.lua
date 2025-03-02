@@ -122,36 +122,63 @@ function sortingTurtle.getItemCategory(itemName)
     -- Convert itemName to lowercase for case-insensitive matching
     itemName = string.lower(itemName)
     
-    -- Extract mod prefix if it exists
-    local modPrefix = itemName:match("^([^:]+):")
+    -- Extract mod prefix and base name
+    local modPrefix, baseName = itemName:match("^([^:]+):(.+)$")
+    if not modPrefix then return "unknown" end
     
-    -- If it's a mod item, use mod_category format
-    if modPrefix and modPrefix ~= "minecraft" then
-        return "mod_" .. modPrefix
-    end
-    
-    -- For vanilla items or items without clear mod prefix, use basic categories
-    local categories = {
-        storage = {"chest", "barrel", "drawer", "crate", "container", "tank"},
-        resource = {"log", "plank", "stone", "ore", "ingot", "block", "dust", "gem"},
-        tool = {"pickaxe", "axe", "shovel", "hoe", "sword", "hammer", "wrench"},
-        redstone = {"redstone", "repeater", "comparator", "piston"},
-        crop = {"seed", "sapling", "flower", "wheat", "carrot", "potato"},
-        mob_drop = {"bone", "flesh", "leather", "wool", "feather"},
-        decoration = {"torch", "lamp", "bed", "door", "glass", "dye"}
-    }
-    
-    -- Try to match against our basic categories for non-mod items
-    for category, keywords in pairs(categories) do
-        for _, keyword in ipairs(keywords) do
-            if itemName:find(keyword) then
-                return category
+    -- Special handling for vanilla minecraft items
+    if modPrefix == "minecraft" then
+        -- Define more specific vanilla categories with related items
+        local vanillaCategories = {
+            building_blocks = {"stone", "dirt", "grass", "podzol", "sand", "gravel", "log", "plank", "brick", "concrete"},
+            ores_minerals = {"ore", "ingot", "raw_", "diamond", "emerald", "coal", "redstone", "lapis", "quartz"},
+            nature = {"sapling", "leaves", "flower", "grass", "vine", "lily", "mushroom", "seed", "wheat"},
+            redstone = {"redstone", "repeater", "comparator", "piston", "observer", "hopper"},
+            mechanisms = {"dispenser", "dropper", "observer", "piston", "hopper", "rail"},
+            decoration = {"torch", "lantern", "chain", "glass", "carpet", "bed", "painting"},
+            tools = {"pickaxe", "axe", "shovel", "hoe", "shears", "fishing"},
+            combat = {"sword", "bow", "arrow", "shield", "armor", "helmet", "chestplate", "leggings", "boots"},
+            food = {"apple", "bread", "cookie", "potato", "carrot", "beef", "pork", "chicken", "fish"},
+            brewing = {"potion", "splash", "lingering", "brewing", "blaze", "netherwart"},
+            materials = {"stick", "string", "leather", "feather", "gunpowder", "bone", "paper", "book"},
+            storage = {"chest", "barrel", "shulker", "hopper", "dispenser", "dropper"}
+        }
+        
+        for category, keywords in pairs(vanillaCategories) do
+            for _, keyword in ipairs(keywords) do
+                if baseName:find(keyword) then
+                    return "minecraft_" .. category
+                end
             end
         end
+        return "minecraft_misc"
     end
     
-    -- If no match found, return misc
-    return "misc"
+    -- For modded items, return mod name and attempt to categorize the item type
+    local modCategories = {
+        machine = {"machine", "generator", "furnace", "crafter", "processor", "smelter"},
+        storage = {"chest", "barrel", "tank", "cell", "storage", "drawer"},
+        tool = {"tool", "hammer", "wrench", "screwdriver", "saw", "cutter"},
+        resource = {"ingot", "gear", "plate", "rod", "dust", "nugget", "gem"},
+        pipe = {"pipe", "conduit", "cable", "duct", "wire", "tube"},
+        crafting = {"table", "bench", "station", "crafter", "workbench"},
+        power = {"energy", "power", "flux", "fe", "rf", "generator"},
+    }
+    
+    -- Try to determine item subcategory
+    local itemType = "misc"
+    for category, keywords in pairs(modCategories) do
+        for _, keyword in ipairs(keywords) do
+            if baseName:find(keyword) then
+                itemType = category
+                break
+            end
+        end
+        if itemType ~= "misc" then break end
+    end
+    
+    -- Return both mod name and item type
+    return modPrefix .. "_" .. itemType
 end
 
 -- Function to check and maintain fuel levels
@@ -588,6 +615,32 @@ function sortingTurtle.returnToChest()
     end
 end
 
+-- Function to get LLM analysis of barrel contents
+function sortingTurtle.analyzeBarrelContents(barrel)
+    if not barrel or not barrel.contents then return nil end
+    
+    local prompt = string.format([[
+Analyze this Minecraft barrel's contents to determine its purpose and suggest what other items would fit well in it.
+
+Current Contents:
+Name: %s
+Display Name: %s
+Category: %s
+
+Consider:
+1. What is the main theme/purpose of this barrel?
+2. What types of items would logically belong here?
+3. Are there related items from the same mod that should go here?
+4. What crafting or gameplay relationships exist with these items?
+
+Return a brief, one-line description of the barrel's purpose.]], 
+        barrel.contents.name,
+        barrel.contents.displayName,
+        barrel.contents.category)
+    
+    return llm.getGeminiResponse(prompt)
+end
+
 -- Optimized scan function that only scans in the direction of barrels
 function sortingTurtle.scanBarrels()
     print("\n=== Starting Barrel Scan ===")
@@ -634,16 +687,27 @@ function sortingTurtle.scanBarrels()
             if string.find(data.name or "", "barrel") or string.find(data.name or "", "storage") then
                 -- Read barrel contents immediately
                 local contents = sortingTurtle.readBarrel()
-                table.insert(sortingTurtle.barrels, {
+                local barrelInfo = {
                     position = steps,
                     contents = contents,
                     blockData = data
-                })
+                }
+                
+                -- Get LLM analysis of barrel contents if not empty
+                if contents.name ~= "empty" then
+                    barrelInfo.analysis = sortingTurtle.analyzeBarrelContents(barrelInfo)
+                end
+                
+                table.insert(sortingTurtle.barrels, barrelInfo)
                 sortingTurtle.numBarrels = sortingTurtle.numBarrels + 1
-                print(string.format("Found barrel %d: %s (%s)", 
-                    sortingTurtle.numBarrels, 
-                    contents.displayName or "empty",
-                    contents.category or "none"))
+                
+                -- Print barrel info with analysis if available
+                print(string.format("\nFound barrel %d:", sortingTurtle.numBarrels))
+                print(string.format("- Contents: %s", contents.displayName or "empty"))
+                print(string.format("- Category: %s", contents.category or "none"))
+                if barrelInfo.analysis then
+                    print(string.format("- Analysis: %s", barrelInfo.analysis))
+                end
             end
         end
         
@@ -690,40 +754,49 @@ function sortingTurtle.getBarrelSlot(itemName, itemCategory)
                           contents.displayName,
                           contents.name,
                           contents.category)
-        barrelContext = barrelContext .. string.format("Barrel %d: %s\n", i, status)
+        -- Add barrel analysis if available
+        if barrel.analysis then
+            status = status .. string.format("\nPurpose: %s", barrel.analysis)
+        end
+        barrelContext = barrelContext .. string.format("\nBarrel %d: %s", i, status)
     end
     
-    -- Extract mod information
-    local modName = itemName:match("^([^:]+):")
-    local modContext = modName and string.format("\nMod Context:\n- Item is from mod: %s", modName) or ""
+    -- Extract mod information and base name
+    local modPrefix, baseName = itemName:match("^([^:]+):(.+)$")
+    local modContext = modPrefix and string.format([[
+Mod Context:
+- Item is from mod: %s
+- Base item name: %s
+- Full item name: %s]], modPrefix, baseName, itemName) or ""
     
     -- Construct a more specific and detailed prompt
     local prompt = string.format([[
 Task: Determine the best barrel (1-%d) for storing a Minecraft item.
 
 Item Details:
-- Full Name: %s
 - Category: %s%s
 
 %s
 
 Selection Rules (in priority order):
 1. EXACT MATCH: If a barrel already contains this exact item, use that barrel
-2. MOD MATCH: If a barrel contains items from the same mod, prefer that barrel
-3. SIMILAR ITEMS: Group items that are commonly used together in crafting or gameplay
-4. EMPTY BARREL: If no good matches exist, use the first empty barrel
+2. MOD & FUNCTION MATCH: If a barrel contains items from the same mod AND similar function (e.g., same machine type, same resource type)
+3. MOD MATCH: If a barrel contains items from the same mod
+4. FUNCTIONAL MATCH: Group items commonly used together in crafting/gameplay (e.g., all machine parts, all power generation items)
+5. VANILLA GROUPING: For vanilla items, group by logical minecraft categories (e.g., building blocks, redstone, etc.)
+6. EMPTY BARREL: If no good matches exist, use the first empty barrel
 
 Additional Guidelines:
-- Keep items from the same mod together when possible
-- Group similar crafting materials together
-- Consider functional relationships between items
-- If multiple matches exist, prefer the lowest barrel number
+- Keep items from the same mod AND same function together (e.g., all Create gears, all Thermal machines)
+- For vanilla items, respect Minecraft's own categorization (e.g., podzol goes with dirt/grass)
+- Consider crafting recipes and gameplay mechanics when grouping
+- Maintain logical groupings (e.g., power-related items together, processing machines together)
+- If multiple matches exist, prefer the barrel with most similar items
 
 Return ONLY a single number between 1 and %d. No explanation needed.
 
 Selected Barrel Number:]], 
         sortingTurtle.numBarrels,
-        itemName,
         itemCategory,
         modContext,
         barrelContext,
