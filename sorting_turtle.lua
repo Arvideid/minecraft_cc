@@ -31,6 +31,59 @@ sortingTurtle.environment = {
     SCAN_RADIUS = 4  -- How far to scan in each direction
 }
 
+-- Add movement history tracking
+sortingTurtle.moveHistory = {}
+
+-- Function to record movement
+function sortingTurtle.recordMove(movement)
+    table.insert(sortingTurtle.moveHistory, movement)
+end
+
+-- Function to get reverse movement
+function sortingTurtle.getReverseMove(movement)
+    if movement == "forward" then return "back"
+    elseif movement == "back" then return "forward"
+    elseif movement == "turnLeft" then return "turnRight"
+    elseif movement == "turnRight" then return "turnLeft"
+    elseif movement == "up" then return "down"
+    elseif movement == "down" then return "up"
+    end
+end
+
+-- Function to clear movement history
+function sortingTurtle.clearMoveHistory()
+    sortingTurtle.moveHistory = {}
+end
+
+-- Function to return to initial position using movement history
+function sortingTurtle.returnToInitialPosition()
+    print("Returning to initial position...")
+    
+    -- Reverse the movement history and execute reverse moves
+    for i = #sortingTurtle.moveHistory, 1, -1 do
+        local reverseMove = sortingTurtle.getReverseMove(sortingTurtle.moveHistory[i])
+        if reverseMove then
+            if reverseMove == "forward" then
+                turtle.forward()
+            elseif reverseMove == "back" then
+                turtle.back()
+            elseif reverseMove == "turnLeft" then
+                turtle.turnLeft()
+            elseif reverseMove == "turnRight" then
+                turtle.turnRight()
+            elseif reverseMove == "up" then
+                turtle.up()
+            elseif reverseMove == "down" then
+                turtle.down()
+            end
+        end
+    end
+    
+    -- Clear the movement history after returning
+    sortingTurtle.clearMoveHistory()
+    print("Returned to initial position")
+end
+
 -- Function to check if a block is a barrel
 function sortingTurtle.isBarrel()
     local success, data = turtle.inspect()
@@ -523,12 +576,15 @@ function sortingTurtle.returnToChest()
     turtle.forward()
 end
 
--- Optimized scan function that only scans in the direction of barrels
+-- Modified scan function with better movement tracking
 function sortingTurtle.scanBarrels()
     print("\n=== Starting Barrel Scan ===")
     sortingTurtle.barrels = {}
     sortingTurtle.numBarrels = 0
     local steps = 0
+    
+    -- Clear previous movement history
+    sortingTurtle.clearMoveHistory()
     
     -- Check fuel before starting
     if not sortingTurtle.checkFuel() then
@@ -537,19 +593,28 @@ function sortingTurtle.scanBarrels()
     end
     
     -- Back away from chest
-    turtle.back()
+    if turtle.back() then
+        sortingTurtle.recordMove("forward") -- Record the reverse move needed
+    else
+        print("Cannot move back from chest!")
+        return
+    end
     
     -- Turn left to face the path
     while sortingTurtle.position.facing ~= 3 do  -- 3 is west (left)
         turtle.turnLeft()
+        sortingTurtle.recordMove("turnRight") -- Record the reverse move needed
         sortingTurtle.updatePosition("turnLeft")
     end
     
     -- Single pass: Move and scan barrels
     print("Scanning for barrels...")
-    while steps < sortingTurtle.config.MAX_STEPS do
+    local foundLastBarrel = false
+    
+    while steps < sortingTurtle.config.MAX_STEPS and not foundLastBarrel do
         -- Turn right to face potential barrel
         turtle.turnRight()
+        sortingTurtle.recordMove("turnLeft")
         sortingTurtle.updatePosition("turnRight")
         
         -- Check for barrel
@@ -568,23 +633,34 @@ function sortingTurtle.scanBarrels()
                     sortingTurtle.numBarrels, 
                     contents.displayName or "empty",
                     contents.category or "none"))
+            else
+                -- If we find a non-barrel block, this might be the end
+                foundLastBarrel = true
             end
+        else
+            -- If we can't detect anything, this might be the end
+            foundLastBarrel = true
         end
         
         -- Turn back to face the path
         turtle.turnLeft()
+        sortingTurtle.recordMove("turnRight")
         sortingTurtle.updatePosition("turnLeft")
         
-        -- Try to move forward
-        if not turtle.forward() then
-            break
+        -- If we haven't found the last barrel, try moving forward
+        if not foundLastBarrel then
+            if turtle.forward() then
+                sortingTurtle.recordMove("back")
+                sortingTurtle.updatePosition("forward")
+                steps = steps + 1
+            else
+                foundLastBarrel = true
+            end
         end
-        sortingTurtle.updatePosition("forward")
-        steps = steps + 1
     end
     
-    -- Return to start using optimized return function
-    sortingTurtle.returnToChest()
+    -- Return to initial position using recorded moves
+    sortingTurtle.returnToInitialPosition()
     
     sortingTurtle.lastScanTime = os.epoch("local")
     
@@ -745,7 +821,7 @@ function sortingTurtle.sortItems()
 end
 
 -- Main loop
-print("=== Smart Sorting Turtle v2.5 ===")
+print("=== Smart Sorting Turtle v2.6 ===")
 print("Setup Instructions:")
 print("1. Place turtle behind input chest, facing the chest")
 print("2. Place barrels in a line to the left of the chest, facing the path")
