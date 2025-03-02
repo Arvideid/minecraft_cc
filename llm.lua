@@ -13,7 +13,7 @@ function getGeminiResponse(prompt)
         contents = {
             {
                 parts = {
-                    { text = "Please respond in plain text. " .. prompt }
+                    { text = "Please respond in plain text only. " .. prompt }
                 }
             }
         }
