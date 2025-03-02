@@ -13,7 +13,7 @@ function getGeminiResponse(prompt)
         contents = {
             {
                 parts = {
-                    { text = prompt }
+                    { text = "Please respond in plain text. " .. prompt }
                 }
             }
         }
@@ -26,10 +26,6 @@ function getGeminiResponse(prompt)
         local content = response.readAll()
         response.close()
         print("Response received.")
-
-        -- Print a simplified version of the response content for debugging
-        local simplifiedContent = content:gsub('[{}[]"]', '')
-        print("Simplified response content: " .. simplifiedContent)
 
         local data = textutils.unserializeJSON(content)
         
