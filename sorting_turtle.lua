@@ -931,15 +931,11 @@ function sortingTurtle.isValidInputStorage()
     return false
 end
 
--- Function to handle problematic items by rescanning and defining new categories
+-- Function to handle problematic items by trying to find a suitable category
 function sortingTurtle.handleProblematicItem(itemName, itemDisplayName)
     print(string.format("\nAttempting to handle problematic item: %s", itemDisplayName or itemName))
     
-    -- Rescan barrels to find empty ones and update categories
-    print("Rescanning barrels to find empty ones...")
-    sortingTurtle.scanBarrels()
-    
-    -- If we found empty barrels, try to define new categories
+    -- First, check if we have any empty barrels in our existing data
     local hasEmptyBarrels = false
     for _, barrel in ipairs(sortingTurtle.barrels) do
         if barrel.contents.isEmpty then
@@ -948,20 +944,65 @@ function sortingTurtle.handleProblematicItem(itemName, itemDisplayName)
         end
     end
     
+    if not hasEmptyBarrels then
+        -- Only rescan if we haven't found any empty barrels in our current data
+        print("No empty barrels found in current data, rescanning...")
+        sortingTurtle.scanBarrels()
+        
+        -- Check again after scan
+        for _, barrel in ipairs(sortingTurtle.barrels) do
+            if barrel.contents.isEmpty then
+                hasEmptyBarrels = true
+                break
+            end
+        end
+    end
+    
     if hasEmptyBarrels then
         print("Found empty barrels, updating categories...")
-        -- Clear existing categories to force redefinition
-        sortingTurtle.categories = {}
-        if sortingTurtle.defineCategories() then
-            print("Categories updated!")
+        -- Try to create a new category specifically for this item type
+        local itemTypePrompt = string.format([[
+I need to categorize this Minecraft item into a new category.
+Item details:
+Name: %s
+Display Name: %s
+
+Please suggest ONE new category name that would be good for this type of item.
+The category should be general enough to include similar items, but specific enough to be meaningful.
+Return ONLY the category name, nothing else.]], 
+            itemName, 
+            itemDisplayName)
+        
+        local newCategory = llm.getGeminiResponse(itemTypePrompt)
+        if newCategory then
+            -- Clean up the category name
+            newCategory = newCategory:gsub('"', ''):gsub("^%s*(.-)%s*$", "%1")
+            
+            -- Add the new category if it doesn't exist
+            local categoryExists = false
+            for _, existingCategory in ipairs(sortingTurtle.categories) do
+                if existingCategory == newCategory then
+                    categoryExists = true
+                    break
+                end
+            end
+            
+            if not categoryExists then
+                table.insert(sortingTurtle.categories, newCategory)
+                print(string.format("Added new category: %s", newCategory))
+            end
+            
+            -- Reassign categories with the new category included
             if sortingTurtle.assignBarrelCategories() then
                 -- Remove the item from problematic items if it was there
                 sortingTurtle.problematicItems[itemName] = nil
+                print("Successfully updated categories to handle this item type")
                 return true
             end
         end
     end
     
+    print("Could not find a suitable solution for this item type")
     return false
 end
 
