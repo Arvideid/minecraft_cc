@@ -731,39 +731,60 @@ end
 -- Function to define categories (called only once during initial scan)
 function sortingTurtle.defineCategories()
     local prompt = [[
-Define logical categories for a Minecraft storage system. Consider common item groupings and gameplay patterns.
-Categories should be comprehensive enough to cover most items but specific enough to be meaningful.
-
-Return a JSON array of category objects in this EXACT format:
+Define basic Minecraft storage categories. Return ONLY a simple JSON array in this format:
 [
   {
-    "name": "category_name",
-    "description": "Brief description of what belongs in this category",
-    "examples": ["example_item_1", "example_item_2"]
+    "name": "building",
+    "items": ["stone", "wood", "glass"]
+  },
+  {
+    "name": "resources",
+    "items": ["iron", "gold", "diamond"]
   }
 ]
 
-Categories should cover:
-1. Building blocks and materials
-2. Tools and equipment
-3. Resources and raw materials
-4. Food and farming
-5. Redstone and mechanisms
-6. Combat and armor
-7. Decorative items
-8. Miscellaneous items
+Use these category names ONLY:
+- building (blocks and construction materials)
+- resources (raw materials and minerals)
+- tools (tools and equipment)
+- combat (weapons and armor)
+- redstone (redstone components)
+- farming (food and agricultural items)
+- decoration (decorative items)
+- storage (chests and containers)
+- misc (miscellaneous items)
 
-Each category should be distinct and clear in its purpose.]]
+Keep the response minimal and consistent. NO explanation text, ONLY the JSON array.]]
 
+    print("Requesting categories...")
     local response = llm.getGeminiResponse(prompt)
-    if response then
-        local success, categories = pcall(textutils.unserializeJSON, response)
-        if success and categories then
-            sortingTurtle.categories = categories  -- Store categories globally
-            return true
-        end
+    
+    if not response then
+        print("Error: No response received")
+        return false
     end
-    return false
+    
+    -- Try to parse the response
+    local success, parsed = pcall(textutils.unserializeJSON, response)
+    if not success then
+        print("Error: Failed to parse response")
+        return false
+    end
+    
+    -- Validate the basic structure
+    if type(parsed) ~= "table" then
+        print("Error: Response is not a table")
+        return false
+    end
+    
+    -- Store the categories
+    sortingTurtle.categories = parsed
+    print("Categories defined:")
+    for _, cat in ipairs(parsed) do
+        print("- " .. cat.name)
+    end
+    
+    return true
 end
 
 -- Function to assign categories to barrels
