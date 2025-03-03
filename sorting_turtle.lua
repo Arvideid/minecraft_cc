@@ -1295,8 +1295,33 @@ function sortingTurtle.scanBarrels()
         end
     end
     
-    -- Return to initial position using movement history
-    sortingTurtle.returnToInitial()
+    -- Direct return to initial position
+    print("Returning to initial position...")
+    
+    -- First turn around to face back (east)
+    while sortingTurtle.position.facing ~= 1 do  -- 1 is east
+        turtle.turnLeft()
+        sortingTurtle.updatePosition("turnLeft")
+    end
+    
+    -- Move directly back to x = 0
+    while sortingTurtle.position.x < 0 do
+        if not turtle.forward() then
+            print("Warning: Could not complete return movement!")
+            break
+        end
+        sortingTurtle.updatePosition("forward")
+    end
+    
+    -- Turn to face north (default position)
+    while sortingTurtle.position.facing ~= 0 do
+        turtle.turnLeft()
+        sortingTurtle.updatePosition("turnLeft")
+    end
+    
+    -- Clear movement history since we're back
+    sortingTurtle.moveHistory = {}
+    print("Returned to initial position")
     
     -- Print barrel summary
     if sortingTurtle.numBarrels > 0 then
