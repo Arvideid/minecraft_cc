@@ -90,24 +90,43 @@ function sortingTurtle.readBarrel()
     local contents = {
         name = "empty",
         displayName = "empty",
-        category = "none"
+        category = "none",
+        items = {}  -- List to store all different items in the barrel
     }
     
     -- Save current selected slot
     local currentSlot = turtle.getSelectedSlot()
+    local foundItems = {}  -- Track unique items
     
-    -- Try to suck one item to get its details
-    if turtle.suck(1) then
-        local item = turtle.getItemDetail()
-        if item then
-            contents = {
-                name = item.name or "unknown",
-                displayName = item.displayName or item.name or "unknown",
-                category = sortingTurtle.getItemCategory(item.name or "unknown")
-            }
+    -- Try to get items until we can't or have found all unique ones
+    local attempts = 0
+    local maxAttempts = 16  -- Reasonable limit to prevent infinite loops
+    
+    while attempts < maxAttempts do
+        if turtle.suck(1) then
+            local item = turtle.getItemDetail()
+            if item then
+                if not foundItems[item.name] then
+                    foundItems[item.name] = true
+                    table.insert(contents.items, {
+                        name = item.name,
+                        displayName = item.displayName or item.name,
+                        category = sortingTurtle.getItemCategory(item.name)
+                    })
+                    -- Set main barrel contents to first item found
+                    if contents.name == "empty" then
+                        contents.name = item.name
+                        contents.displayName = item.displayName or item.name
+                        contents.category = sortingTurtle.getItemCategory(item.name)
+                    end
+                end
+            end
             -- Put the item back
             turtle.drop(1)
+        else
+            break  -- No more items to check
         end
+        attempts = attempts + 1
     end
     
     -- Restore selected slot
@@ -619,152 +638,33 @@ end
 function sortingTurtle.analyzeBarrelContents(barrel)
     if not barrel or not barrel.contents then return nil end
     
+    -- Create a list of all items in the barrel
+    local itemsList = "Primary item: " .. barrel.contents.displayName
+    if #barrel.contents.items > 1 then
+        itemsList = itemsList .. "\nOther items:"
+        for i = 2, #barrel.contents.items do
+            itemsList = itemsList .. "\n- " .. barrel.contents.items[i].displayName
+        end
+    end
+    
     local prompt = string.format([[
 Analyze this Minecraft barrel's contents to determine its purpose and suggest what other items would fit well in it.
 
 Current Contents:
-Name: %s
-Display Name: %s
+%s
 Category: %s
 
 Consider:
-1. What is the main theme/purpose of this barrel?
+1. What is the main theme/purpose of this barrel based on ALL items in it?
 2. What types of items would logically belong here?
 3. Are there related items from the same mod that should go here?
 4. What crafting or gameplay relationships exist with these items?
 
 Return a brief, one-line description of the barrel's purpose.]], 
-        barrel.contents.name,
-        barrel.contents.displayName,
+        itemsList,
         barrel.contents.category)
     
     return llm.getGeminiResponse(prompt)
-end
-
--- Function to analyze if items should be reorganized
-function sortingTurtle.analyzeReorganization(barrels)
-    if #barrels == 0 then return nil end
-    
-    -- Create context of all barrels for LLM
-    local barrelContext = "Current barrel organization:\n"
-    for i, barrel in ipairs(barrels) do
-        local contents = barrel.contents
-        barrelContext = barrelContext .. string.format("\nBarrel %d: %s (Category: %s)", 
-            i, 
-            contents.displayName or "empty",
-            contents.category or "none")
-    end
-    
-    local prompt = string.format([[
-Analyze the current barrel organization and suggest if any items should be moved to optimize storage.
-
-%s
-
-Consider:
-1. Are there items that would be better grouped together?
-2. Are there barrels mixing different mods or functions that should be separated?
-3. Could the organization be improved for crafting efficiency?
-4. Are similar items spread across multiple barrels?
-
-Return a JSON array of moves that should be made, or empty array if no changes needed. Format:
-[
-  {"from": barrel_number, "to": barrel_number, "reason": "brief explanation"},
-  ...
-]
-
-Response:]], barrelContext)
-
-    local response = llm.getGeminiResponse(prompt)
-    if response then
-        -- Try to parse the JSON response
-        local success, moves = pcall(textutils.unserializeJSON, response)
-        if success and type(moves) == "table" then
-            return moves
-        end
-    end
-    return {}
-end
-
--- Function to collect items from a barrel
-function sortingTurtle.collectFromBarrel()
-    -- Try to collect all items from current barrel
-    local collected = {}
-    while true do
-        if turtle.suck() then
-            local item = turtle.getItemDetail()
-            if item then
-                table.insert(collected, item)
-            end
-        else
-            break
-        end
-    end
-    return collected
-end
-
--- Function to reorganize barrels
-function sortingTurtle.reorganizeBarrels()
-    print("\n=== Analyzing Barrel Organization ===")
-    
-    -- Get reorganization suggestions
-    local moves = sortingTurtle.analyzeReorganization(sortingTurtle.barrels)
-    if #moves == 0 then
-        print("Current organization is optimal!")
-        return
-    end
-    
-    print(string.format("\nExecuting %d optimization moves...", #moves))
-    
-    -- Execute moves
-    for i, move in ipairs(moves) do
-        print(string.format("\nExecuting move %d/%d...", i, #moves))
-        
-        -- Move to source barrel
-        if sortingTurtle.moveToBarrel(move.from) then
-            -- Collect items
-            local collected = sortingTurtle.collectFromBarrel()
-            if #collected > 0 then
-                -- Return to initial position
-                sortingTurtle.returnToInitial()
-                
-                -- Move to destination barrel
-                if sortingTurtle.moveToBarrel(move.to) then
-                    -- Drop all collected items
-                    for _, item in ipairs(collected) do
-                        turtle.drop()
-                    end
-                    
-                    -- Update barrel contents in memory
-                    sortingTurtle.barrels[move.to].contents = {
-                        name = collected[1].name,
-                        displayName = collected[1].displayName,
-                        category = sortingTurtle.getItemCategory(collected[1].name)
-                    }
-                    -- Clear source barrel contents
-                    sortingTurtle.barrels[move.from].contents = {
-                        name = "empty",
-                        displayName = "empty",
-                        category = "none"
-                    }
-                    
-                    print("Move completed successfully!")
-                else
-                    print("Could not reach destination barrel!")
-                    -- Return items to source
-                    sortingTurtle.returnToInitial()
-                    sortingTurtle.moveToBarrel(move.from)
-                    for _, item in ipairs(collected) do
-                        turtle.drop()
-                    end
-                end
-            end
-        end
-        
-        -- Return to initial position
-        sortingTurtle.returnToInitial()
-    end
-    
-    print("\nReorganization complete!")
 end
 
 -- Optimized scan function that only scans in the direction of barrels
@@ -860,103 +760,33 @@ function sortingTurtle.scanBarrels()
     -- Print barrel summary
     if sortingTurtle.numBarrels > 0 then
         print(string.format("\nFound %d barrels", sortingTurtle.numBarrels))
-        
-        -- Analyze and suggest reorganization
-        print("\nAnalyzing organization...")
-        local moves = sortingTurtle.analyzeReorganization(sortingTurtle.barrels)
-        if #moves > 0 then
-            print("\nSuggested reorganization found!")
-            print("Would you like to reorganize the barrels? (y/n)")
-            local input = read()
-            if input:lower() == "y" then
-                sortingTurtle.reorganizeBarrels()
-            end
-        else
-            print("\nCurrent organization is optimal!")
-        end
     else
         print("\nNo barrels found! Please set up barrels and restart.")
     end
 end
 
--- Function to determine which barrel slot to use based on item name using LLM
-function sortingTurtle.getBarrelSlot(itemName, itemCategory)
-    if sortingTurtle.numBarrels == 0 then
-        return nil
+-- Function to check for items in input storage
+function sortingTurtle.checkInputStorage()
+    if not sortingTurtle.isValidInputStorage() then
+        return false
     end
-
-    -- Create a detailed context for the LLM with better formatting
-    local barrelContext = "Current barrel setup:\n"
-    for i, barrel in ipairs(sortingTurtle.barrels) do
-        local contents = barrel.contents
-        local status = contents.name == "empty" and "EMPTY" or 
-                      string.format("Contains: %s (Type: %s, Category: %s)", 
-                          contents.displayName,
-                          contents.name,
-                          contents.category)
-        -- Add barrel analysis if available
-        if barrel.analysis then
-            status = status .. string.format("\nPurpose: %s", barrel.analysis)
+    
+    -- Try to detect items without removing them
+    local success, data = turtle.inspect()
+    if success and data then
+        -- Most storage blocks have an 'items' field in their NBT data
+        if data.state and (data.state.items or data.state.Items) then
+            return true
         end
-        barrelContext = barrelContext .. string.format("\nBarrel %d: %s", i, status)
     end
     
-    -- Extract mod information and base name
-    local modPrefix, baseName = itemName:match("^([^:]+):(.+)$")
-    local modContext = modPrefix and string.format([[
-Mod Context:
-- Item is from mod: %s
-- Base item name: %s
-- Full item name: %s]], modPrefix, baseName, itemName) or ""
-    
-    -- Construct a more specific and detailed prompt
-    local prompt = string.format([[
-Task: Determine the best barrel (1-%d) for storing a Minecraft item.
-
-Item Details:
-- Category: %s%s
-
-%s
-
-Selection Rules (in priority order):
-1. EXACT MATCH: If a barrel already contains this exact item, use that barrel
-2. MOD & FUNCTION MATCH: If a barrel contains items from the same mod AND similar function (e.g., same machine type, same resource type)
-3. MOD MATCH: If a barrel contains items from the same mod
-4. FUNCTIONAL MATCH: Group items commonly used together in crafting/gameplay (e.g., all machine parts, all power generation items)
-5. VANILLA GROUPING: For vanilla items, group by logical minecraft categories (e.g., building blocks, redstone, etc.)
-6. EMPTY BARREL: If no good matches exist, use the first empty barrel
-
-Additional Guidelines:
-- Keep items from the same mod AND same function together (e.g., all Create gears, all Thermal machines)
-- For vanilla items, respect Minecraft's own categorization (e.g., podzol goes with dirt/grass)
-- Consider crafting recipes and gameplay mechanics when grouping
-- Maintain logical groupings (e.g., power-related items together, processing machines together)
-- If multiple matches exist, prefer the barrel with most similar items
-
-Return ONLY a single number between 1 and %d. No explanation needed.
-
-Selected Barrel Number:]], 
-        sortingTurtle.numBarrels,
-        itemCategory,
-        modContext,
-        barrelContext,
-        sortingTurtle.numBarrels)
-
-    local response = llm.getGeminiResponse(prompt)
-    
-    if response then
-        -- Clean up response to ensure we only get a number
-        response = response:match("^%s*(%d+)%s*$")
-        local barrelSlot = tonumber(response)
-        if barrelSlot and barrelSlot >= 1 and barrelSlot <= sortingTurtle.numBarrels then
-            return barrelSlot
-        else
-            print("Invalid barrel number from LLM: " .. (response or "nil"))
-        end
-    else
-        print("No response received from LLM.")
+    -- Fallback: Try to suck and immediately return one item
+    if turtle.suck(1) then
+        turtle.drop()
+        return true
     end
-    return nil
+    
+    return false
 end
 
 -- Function to check if block in front is a valid storage
@@ -1099,6 +929,95 @@ function sortingTurtle.sortItems()
     end
 end
 
+-- Function to determine which barrel slot to use based on item name using LLM
+function sortingTurtle.getBarrelSlot(itemName, itemCategory)
+    if sortingTurtle.numBarrels == 0 then
+        return nil
+    end
+
+    -- Create a detailed context for the LLM with better formatting
+    local barrelContext = "Current barrel setup:\n"
+    for i, barrel in ipairs(sortingTurtle.barrels) do
+        local contents = barrel.contents
+        local status = contents.name == "empty" and "EMPTY" or 
+                      string.format("Contains: %s (Primary, %s)", contents.displayName, contents.category)
+        
+        -- Add other items in the barrel
+        if #contents.items > 1 then
+            status = status .. "\nOther items in barrel:"
+            for j = 2, #contents.items do
+                status = status .. string.format("\n- %s (%s)", 
+                    contents.items[j].displayName,
+                    contents.items[j].category)
+            end
+        end
+        
+        -- Add barrel analysis if available
+        if barrel.analysis then
+            status = status .. string.format("\nPurpose: %s", barrel.analysis)
+        end
+        barrelContext = barrelContext .. string.format("\nBarrel %d: %s", i, status)
+    end
+    
+    -- Extract mod information and base name
+    local modPrefix, baseName = itemName:match("^([^:]+):(.+)$")
+    local modContext = modPrefix and string.format([[
+Mod Context:
+- Item is from mod: %s
+- Base item name: %s
+- Full item name: %s]], modPrefix, baseName, itemName) or ""
+    
+    -- Construct a more specific and detailed prompt
+    local prompt = string.format([[
+Task: Determine the best barrel (1-%d) for storing a Minecraft item.
+
+Item Details:
+- Category: %s%s
+
+%s
+
+Selection Rules (in priority order):
+1. EXACT MATCH: If a barrel already contains this exact item, use that barrel
+2. MOD & FUNCTION MATCH: If a barrel contains items from the same mod AND similar function (e.g., same machine type, same resource type)
+3. MOD MATCH: If a barrel contains items from the same mod
+4. FUNCTIONAL MATCH: Group items commonly used together in crafting/gameplay (e.g., all machine parts, all power generation items)
+5. VANILLA GROUPING: For vanilla items, group by logical minecraft categories (e.g., building blocks, redstone, etc.)
+6. EMPTY BARREL: If no good matches exist, use the first empty barrel
+
+Additional Guidelines:
+- Keep items from the same mod AND same function together (e.g., all Create gears, all Thermal machines)
+- For vanilla items, respect Minecraft's own categorization (e.g., podzol goes with dirt/grass)
+- Consider ALL items currently in each barrel, not just the primary item
+- Consider crafting recipes and gameplay mechanics when grouping
+- Maintain logical groupings (e.g., power-related items together, processing machines together)
+- If multiple matches exist, prefer the barrel with most similar items
+
+Return ONLY a single number between 1 and %d. No explanation needed.
+
+Selected Barrel Number:]], 
+        sortingTurtle.numBarrels,
+        itemCategory,
+        modContext,
+        barrelContext,
+        sortingTurtle.numBarrels)
+
+    local response = llm.getGeminiResponse(prompt)
+    
+    if response then
+        -- Clean up response to ensure we only get a number
+        response = response:match("^%s*(%d+)%s*$")
+        local barrelSlot = tonumber(response)
+        if barrelSlot and barrelSlot >= 1 and barrelSlot <= sortingTurtle.numBarrels then
+            return barrelSlot
+        else
+            print("Invalid barrel number from LLM: " .. (response or "nil"))
+        end
+    else
+        print("No response received from LLM.")
+    end
+    return nil
+end
+
 -- Main loop
 print("=== Smart Sorting Turtle v2.8 ===")
 print("Setup Instructions:")
@@ -1111,58 +1030,30 @@ print("[S][B][B][B]...")
 print("[T]")
 print("Where: T=Turtle (facing up), S=Input Storage, B=Sorting Barrels")
 
--- Initialize system
+-- Initial setup check
 if not sortingTurtle.isValidInputStorage() then
-    print("Error: No input storage detected in front! Please set up correctly and restart.")
+    print("\nNo input storage found! Please place a chest or barrel in front of the turtle.")
     return sortingTurtle
 end
 
-print("\nInitializing system...")
-sortingTurtle.scanBarrels()
-
-if sortingTurtle.numBarrels == 0 then
-    print("\nError: No barrels found! Please set up barrels and restart.")
-    return sortingTurtle
-end
-
-print("\nSystem ready - Monitoring input storage...")
+print("\nWaiting for items...")
 
 while true do
-    -- Check for items in input storage
-    local hasItems = false
-    for slot = 1, 16 do
-        if turtle.suck() then
-            hasItems = true
-            turtle.drop() -- Put it back
-            break
-        end
-    end
-    
-    if hasItems then
-        -- Check if we need to rescan barrels
-        local currentTime = os.epoch("local")
-        local needsRescan = sortingTurtle.numBarrels == 0 or 
-                           (currentTime - sortingTurtle.lastScanTime) > sortingTurtle.config.SCAN_INTERVAL
+    -- Check if there are items to sort
+    if sortingTurtle.checkInputStorage() then
+        print("\nItems detected! Starting sort process...")
         
-        if needsRescan then
-            print("\nNew items detected - Updating barrel configuration...")
-            sortingTurtle.scanBarrels()
-            
-            if sortingTurtle.numBarrels == 0 then
-                print("Error: Lost connection to barrels! Please check setup.")
-                os.sleep(5)
-            else
-                -- Sort the items
-                print("\nProcessing items...")
-                sortingTurtle.sortItems()
-                print("Waiting for new items...")
-            end
-        else
-            -- Sort the items directly if no rescan needed
-            print("\nProcessing items...")
+        -- Scan barrels first (without taking items from input)
+        sortingTurtle.scanBarrels()
+        
+        -- If barrels found, proceed with sorting
+        if sortingTurtle.numBarrels > 0 then
             sortingTurtle.sortItems()
-            print("Waiting for new items...")
+        else
+            print("\nNo barrels found! Please set up barrels and try again.")
         end
+        
+        print("\nSort complete. Waiting for new items...")
     end
     
     os.sleep(2)  -- Check every 2 seconds for new items
