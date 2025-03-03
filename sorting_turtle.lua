@@ -1380,6 +1380,24 @@ function sortingTurtle.scanBarrels()
     sortingTurtle.lastScanTime = os.epoch("local")
 end
 
+-- Function to check if there are items in the input storage
+function sortingTurtle.hasItemsInStorage()
+    -- First check if we're facing valid storage
+    if not sortingTurtle.isValidInputStorage() then
+        return false
+    end
+    
+    -- Try to suck an item (and put it back if found)
+    for slot = 1, 16 do
+        if turtle.suck() then
+            turtle.drop()  -- Put it back immediately
+            return true
+        end
+    end
+    
+    return false
+end
+
 -- Main loop
 print("=== Smart Sorting Turtle v3.1 ===")
 print("Setup Instructions:")
