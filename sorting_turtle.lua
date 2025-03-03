@@ -735,10 +735,11 @@ end
 function sortingTurtle.defineCategories()
     local prompt = [[
 Define a list of Minecraft item categories for sorting items into barrels.
+IMPORTANT: The list MUST start with 'unknown' and end with 'problematic_items'.
 Use short, simple categories like: wood, stone, ores, metals, tools, redstone, create, food, etc.
-IMPORTANT: Always include 'problematic_items' as the last category.
 Return ONLY category names, one per line, nothing else.
 Example response:
+unknown
 wood
 stone
 ores
@@ -767,22 +768,28 @@ problematic_items]]
         end
     end
     
-    -- Ensure problematic_items category exists
-    local hasProblematicCategory = false
+    -- Ensure unknown is first category and problematic_items is last
+    local hasUnknown = false
+    local hasProblematic = false
+    
     for _, category in ipairs(sortingTurtle.categories) do
-        if category == "problematic_items" then
-            hasProblematicCategory = true
-            break
-        end
+        if category == "unknown" then hasUnknown = true end
+        if category == "problematic_items" then hasProblematic = true end
     end
     
-    if not hasProblematicCategory then
+    -- If unknown category is missing, add it at the start
+    if not hasUnknown then
+        table.insert(sortingTurtle.categories, 1, "unknown")
+    end
+    
+    -- If problematic_items is missing, add it at the end
+    if not hasProblematic then
         table.insert(sortingTurtle.categories, "problematic_items")
     end
     
-    if #sortingTurtle.categories == 0 then
-        print("Error: No valid categories defined")
-        return false
+    -- Ensure we have at least these two categories
+    if #sortingTurtle.categories < 2 then
+        sortingTurtle.categories = {"unknown", "problematic_items"}
     end
     
     print("\nDefined categories:")
@@ -814,6 +821,7 @@ function sortingTurtle.assignBarrelCategories()
     local categoriesText = table.concat(sortingTurtle.categories, "\n")
     local prompt = string.format([[
 Assign ONE category to each barrel based on its contents.
+IMPORTANT: The first barrel (Barrel 1) MUST be assigned to 'unknown' category.
 Use ONLY categories from this list:
 %s
 
@@ -822,7 +830,7 @@ Barrel Contents:
 
 Return ONLY category assignments, one per line.
 Example format:
-wood
+unknown
 stone
 ores
 
@@ -841,6 +849,11 @@ One category per line, matching the number of barrels.]],
         -- Clean up each line (remove spaces, quotes)
         local category = line:gsub('"', ''):gsub("^%s*(.-)%s*$", "%1")
         table.insert(assignments, category)
+    end
+    
+    -- Ensure first barrel is assigned to unknown
+    if #assignments > 0 then
+        assignments[1] = "unknown"
     end
     
     -- Verify all assignments are valid categories
