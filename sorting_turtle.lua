@@ -736,6 +736,7 @@ function sortingTurtle.defineCategories()
     local prompt = [[
 Define a list of Minecraft item categories for sorting items into barrels.
 Use short, simple categories like: wood, stone, ores, metals, tools, redstone, create, food, etc.
+IMPORTANT: Always include 'problematic_items' as the last category.
 Return ONLY category names, one per line, nothing else.
 Example response:
 wood
@@ -745,7 +746,8 @@ metals
 tools
 redstone
 create
-food]]
+food
+problematic_items]]
 
     print("Requesting categories...")
     local response = llm.getGeminiResponse(prompt)
@@ -763,6 +765,19 @@ food]]
         if category ~= "" then
             table.insert(sortingTurtle.categories, category)
         end
+    end
+    
+    -- Ensure problematic_items category exists
+    local hasProblematicCategory = false
+    for _, category in ipairs(sortingTurtle.categories) do
+        if category == "problematic_items" then
+            hasProblematicCategory = true
+            break
+        end
+    end
+    
+    if not hasProblematicCategory then
+        table.insert(sortingTurtle.categories, "problematic_items")
     end
     
     if #sortingTurtle.categories == 0 then
@@ -861,11 +876,6 @@ end
 function sortingTurtle.getBarrelSlot(itemName, itemDisplayName)
     if sortingTurtle.numBarrels == 0 then return nil end
     
-    -- Check if this is a problematic item
-    if sortingTurtle.problematicItems[itemName] then
-        return sortingTurtle.numBarrels  -- Return the last barrel for problematic items
-    end
-    
     -- First, determine which category this item belongs to
     local categoriesText = table.concat(sortingTurtle.categories, "\n")
     local prompt = string.format([[
@@ -885,15 +895,7 @@ Just the category name, nothing else.]],
         categoriesText)
     
     local itemCategory = llm.getGeminiResponse(prompt)
-    if not itemCategory then 
-        -- If we can't get a category, treat it as problematic
-        sortingTurtle.problematicItems[itemName] = {
-            name = itemName,
-            displayName = itemDisplayName,
-            attempts = 1
-        }
-        return sortingTurtle.numBarrels
-    end
+    if not itemCategory then return nil end
     
     -- Clean up the response (remove any quotes or whitespace)
     itemCategory = itemCategory:gsub('"', ''):gsub("^%s*(.-)%s*$", "%1")
@@ -910,40 +912,25 @@ Just the category name, nothing else.]],
     if not isValidCategory then
         print(string.format("Warning: Invalid category '%s' returned for item %s", 
             itemCategory, itemDisplayName or itemName))
-        -- If category is invalid, treat as problematic
-        sortingTurtle.problematicItems[itemName] = {
-            name = itemName,
-            displayName = itemDisplayName,
-            attempts = 1
-        }
-        return sortingTurtle.numBarrels
+        return nil
     end
     
     -- First, try to find a barrel already assigned to this category that has items
     for barrelNum, category in pairs(sortingTurtle.barrelAssignments) do
-        if barrelNum < sortingTurtle.numBarrels and  -- Skip the problematic items barrel
-           category == itemCategory and 
-           not sortingTurtle.barrels[barrelNum].contents.isEmpty then
+        if category == itemCategory and not sortingTurtle.barrels[barrelNum].contents.isEmpty then
             return barrelNum
         end
     end
     
     -- If no existing barrel with items found, try to find an empty barrel assigned to this category
     for barrelNum, category in pairs(sortingTurtle.barrelAssignments) do
-        if barrelNum < sortingTurtle.numBarrels and  -- Skip the problematic items barrel
-           category == itemCategory and 
-           sortingTurtle.barrels[barrelNum].contents.isEmpty then
+        if category == itemCategory and sortingTurtle.barrels[barrelNum].contents.isEmpty then
             return barrelNum
         end
     end
     
-    -- If no barrel found, treat as problematic
-    sortingTurtle.problematicItems[itemName] = {
-        name = itemName,
-        displayName = itemDisplayName,
-        attempts = 1
-    }
-    return sortingTurtle.numBarrels
+    -- If no barrel found, return nil
+    return nil
 end
 
 -- Function to check if block in front is a valid storage
@@ -959,35 +946,38 @@ function sortingTurtle.isValidInputStorage()
     return false
 end
 
--- Function to handle problematic items by trying to find a suitable category
+-- Function to handle problematic items by assigning them to the problematic_items category
 function sortingTurtle.handleProblematicItem(itemName, itemDisplayName)
     print(string.format("\nHandling problematic item: %s", itemDisplayName or itemName))
     
-    -- Try to find the last barrel (reserved for problematic items)
-    if sortingTurtle.numBarrels > 0 then
-        local problematicBarrel = sortingTurtle.numBarrels
-        
-        -- Move to the problematic items barrel
-        if sortingTurtle.moveToBarrel(problematicBarrel) then
-            if turtle.drop() then
-                -- Update barrel contents in memory
-                if not sortingTurtle.barrels[problematicBarrel].contents then
-                    sortingTurtle.barrels[problematicBarrel].contents = {
-                        items = {},
-                        isEmpty = false
-                    }
-                end
-                table.insert(sortingTurtle.barrels[problematicBarrel].contents.items, {
+    -- Find a barrel assigned to problematic_items category
+    for barrelNum, category in pairs(sortingTurtle.barrelAssignments) do
+        if category == "problematic_items" then
+            -- Add item to problematic items list if not already there
+            if not sortingTurtle.problematicItems[itemName] then
+                sortingTurtle.problematicItems[itemName] = {
                     name = itemName,
-                    displayName = itemDisplayName
-                })
-                print(string.format("Stored problematic item in barrel %d", problematicBarrel))
-                return true
+                    displayName = itemDisplayName,
+                    attempts = 1
+                }
             end
+            
+            print(string.format("Assigning to problematic items barrel %d", barrelNum))
+            return true
         end
     end
     
-    print("Could not store problematic item")
+    -- If no problematic_items barrel found, try to find an empty barrel to assign
+    for barrelNum, barrel in ipairs(sortingTurtle.barrels) do
+        if barrel.contents.isEmpty then
+            -- Assign this barrel to problematic_items category
+            sortingTurtle.barrelAssignments[barrelNum] = "problematic_items"
+            print(string.format("Assigned empty barrel %d to problematic items", barrelNum))
+            return true
+        end
+    end
+    
+    print("No available barrel for problematic items!")
     return false
 end
 
@@ -1240,11 +1230,7 @@ function sortingTurtle.scanBarrels()
                 
                 -- Print basic barrel info
                 print(string.format("\nFound barrel %d:", sortingTurtle.numBarrels))
-                if sortingTurtle.numBarrels == #sortingTurtle.barrels then
-                    print("- Reserved for problematic items")
-                else
-                    print(string.format("- Contents: %s", contents.isEmpty and "EMPTY" or "Items present"))
-                end
+                print(string.format("- Contents: %s", contents.isEmpty and "EMPTY" or "Items present"))
             end
         end
         
@@ -1268,8 +1254,7 @@ function sortingTurtle.scanBarrels()
     
     -- Print barrel summary
     if sortingTurtle.numBarrels > 0 then
-        print(string.format("\nFound %d barrels (%d for sorting, 1 for problematic items)", 
-            sortingTurtle.numBarrels, sortingTurtle.numBarrels - 1))
+        print(string.format("\nFound %d barrels", sortingTurtle.numBarrels))
         
         -- Define categories if this is the first scan (categories table is empty)
         if next(sortingTurtle.categories) == nil then
@@ -1282,19 +1267,14 @@ function sortingTurtle.scanBarrels()
             end
         end
         
-        -- Assign categories to barrels (excluding the last barrel)
+        -- Assign categories to barrels
         print("\nAssigning categories to barrels...")
         if sortingTurtle.assignBarrelCategories() then
             print("Category assignment complete!")
             -- Print category assignments
             for barrel, category in pairs(sortingTurtle.barrelAssignments) do
-                if barrel < sortingTurtle.numBarrels then  -- Skip last barrel
-                    print(string.format("Barrel %d: %s", barrel, category))
-                end
+                print(string.format("Barrel %d: %s", barrel, category))
             end
-            -- Assign special category to last barrel
-            sortingTurtle.barrelAssignments[sortingTurtle.numBarrels] = "problematic_items"
-            print(string.format("Barrel %d: problematic_items", sortingTurtle.numBarrels))
         else
             print("Warning: Could not assign categories to barrels")
         end
