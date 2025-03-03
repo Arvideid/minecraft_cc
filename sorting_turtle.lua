@@ -1190,13 +1190,13 @@ function sortingTurtle.scanBarrels()
         return
     end
     
-    -- Turn left to face the path (no need to back away)
+    -- Turn left to face the barrels if not already facing them
     while sortingTurtle.position.facing ~= 3 do  -- 3 is west (left)
         turtle.turnLeft()
         sortingTurtle.updatePosition("turnLeft")
     end
     
-    -- Move forward one step to be in line with the barrels
+    -- Move forward one step to be in line with barrels
     if turtle.forward() then
         sortingTurtle.updatePosition("forward")
     else
@@ -1245,9 +1245,30 @@ function sortingTurtle.scanBarrels()
         end
     end
     
-    -- Return to initial position directly using returnToInitial
-    if not sortingTurtle.returnToInitial() then
-        print("Warning: Could not return to exact initial position!")
+    -- Return to initial position using same logic as sorting function
+    -- First turn back to face the path (west)
+    while sortingTurtle.position.facing ~= 3 do  -- 3 is west (left)
+        turtle.turnLeft()
+        sortingTurtle.updatePosition("turnLeft")
+    end
+    
+    -- Move back to the chest position
+    while sortingTurtle.position.x < 0 do
+        if turtle.forward() then
+            sortingTurtle.updatePosition("forward")
+        else
+            break
+        end
+    end
+    
+    -- Move back one step to be behind the input storage
+    turtle.back()
+    sortingTurtle.updatePosition("back")
+    
+    -- Turn to face the input storage (north)
+    while sortingTurtle.position.facing ~= 0 do
+        turtle.turnLeft()
+        sortingTurtle.updatePosition("turnLeft")
     end
     
     -- Print barrel summary
