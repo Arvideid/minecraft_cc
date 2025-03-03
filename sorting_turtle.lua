@@ -988,10 +988,16 @@ function sortingTurtle.sortItems()
     
     -- Check if we need to rescan barrels
     local currentTime = os.epoch("local")
-    if sortingTurtle.numBarrels == 0 or 
-       (currentTime - sortingTurtle.lastScanTime) > sortingTurtle.config.SCAN_INTERVAL then
+    if sortingTurtle.numBarrels == 0 then
+        -- If no barrels found at all, do an initial scan
         sortingTurtle.scanBarrels()
-        -- If no barrels found, just return
+        if sortingTurtle.numBarrels == 0 then 
+            return 
+        end
+    elseif (currentTime - sortingTurtle.lastScanTime) > sortingTurtle.config.SCAN_INTERVAL then
+        -- Only rescan if enough time has passed since last scan
+        print("Performing periodic barrel scan...")
+        sortingTurtle.scanBarrels()
         if sortingTurtle.numBarrels == 0 then 
             return 
         end
