@@ -32,10 +32,10 @@ sortingTurtle.barrelMemory = {
     SAVE_INTERVAL = 300  -- Save every 5 minutes if changes occurred
 }
 
--- Add barrel category structure
+-- Add barrel categories structure
 sortingTurtle.barrelCategories = {
-    assigned = {},  -- Store assigned categories by barrel number
-    SAVE_INTERVAL = 300  -- Save every 5 minutes
+    assigned = {},  -- Maps barrel numbers to their assigned categories
+    lastUpdate = 0
 }
 
 -- Function to add movement to history
@@ -58,55 +58,24 @@ end
 function sortingTurtle.returnToInitial()
     print("Returning to initial position...")
     
-    -- Calculate direct path back
-    local moves = {}
-    
-    -- First handle X position (moving east/west)
-    while sortingTurtle.position.x < 0 do
-        table.insert(moves, "forward")
-    end
-    while sortingTurtle.position.x > 0 do
-        table.insert(moves, "back")
-    end
-    
-    -- Then handle Z position (moving north/south)
-    if sortingTurtle.position.z ~= 0 then
-        -- Turn to face the right direction
-        if sortingTurtle.position.z > 0 then
-            while sortingTurtle.position.facing ~= 0 do  -- Face north
-                table.insert(moves, "turnLeft")
+    -- Reverse through movement history
+    for i = #sortingTurtle.moveHistory, 1, -1 do
+        local reverseMove = sortingTurtle.getReverseMovement(sortingTurtle.moveHistory[i])
+        if reverseMove then
+            if not turtle[reverseMove]() then
+                print("Warning: Could not complete reverse movement!")
+                break
             end
-        else
-            while sortingTurtle.position.facing ~= 2 do  -- Face south
-                table.insert(moves, "turnLeft")
-            end
-        end
-        
-        -- Move to correct Z position
-        while sortingTurtle.position.z ~= 0 do
-            if sortingTurtle.position.z > 0 then
-                table.insert(moves, "forward")
-            else
-                table.insert(moves, "forward")
+            -- Update position for the reverse movement
+            if reverseMove == "forward" or reverseMove == "back" or 
+               reverseMove == "up" or reverseMove == "down" or
+               reverseMove == "turnLeft" or reverseMove == "turnRight" then
+                sortingTurtle.updatePosition(reverseMove)
             end
         end
     end
     
-    -- Finally, turn to face north (no scanning needed)
-    while sortingTurtle.position.facing ~= 0 do
-        table.insert(moves, "turnLeft")
-    end
-    
-    -- Execute the moves
-    for _, move in ipairs(moves) do
-        if not turtle[move]() then
-            print("Warning: Could not complete return movement!")
-            break
-        end
-        sortingTurtle.updatePosition(move)
-    end
-    
-    -- Clear movement history
+    -- Clear movement history after returning
     sortingTurtle.moveHistory = {}
     print("Returned to initial position")
 end
@@ -748,7 +717,100 @@ Include ALL barrels, even empty ones.]],
     return false
 end
 
--- Optimized scan function that only scans in the direction of barrels
+-- Function to assign categories to barrels
+function sortingTurtle.assignBarrelCategories()
+    -- Build complete state context
+    local context = {
+        barrels = sortingTurtle.barrels,
+        existing_categories = sortingTurtle.barrelCategories.assigned
+    }
+    
+    local prompt = string.format([[
+Analyze these Minecraft barrels and assign logical storage categories.
+Current state:
+%s
+
+Guidelines:
+1. Create categories that group related items (e.g., "Building Blocks", "Wood Materials", "Stone Types")
+2. Consider crafting relationships and gameplay usage
+3. Make categories broad enough to be useful but specific enough to be meaningful
+4. Account for both vanilla and modded items
+5. Categories should be consistent and reusable
+
+Return a JSON object mapping barrel numbers to categories:
+{
+    "barrel_assignments": [
+        {
+            "barrel": 1,
+            "category": "category_name",
+            "description": "Brief description of what belongs here"
+        }
+    ]
+}
+]], textutils.serialize(context))
+
+    local response = llm.getGeminiResponse(prompt)
+    if response then
+        local success, assignments = pcall(textutils.unserializeJSON, response)
+        if success and assignments and assignments.barrel_assignments then
+            -- Clear existing assignments
+            sortingTurtle.barrelCategories.assigned = {}
+            
+            -- Apply new assignments
+            for _, assignment in ipairs(assignments.barrel_assignments) do
+                if assignment.barrel and assignment.category then
+                    sortingTurtle.barrelCategories.assigned[assignment.barrel] = {
+                        category = assignment.category,
+                        description = assignment.description,
+                        assigned_time = os.epoch("local")
+                    }
+                end
+            end
+            
+            -- Save the category assignments
+            sortingTurtle.barrelCategories.lastUpdate = os.epoch("local")
+            sortingTurtle.saveBarrelCategories()
+            
+            -- Print the new categories
+            print("\nAssigned barrel categories:")
+            for barrel, info in pairs(sortingTurtle.barrelCategories.assigned) do
+                print(string.format("Barrel %d: %s", barrel, info.category))
+                print("  " .. info.description)
+            end
+            
+            return true
+        end
+    end
+    return false
+end
+
+-- Function to save barrel categories
+function sortingTurtle.saveBarrelCategories()
+    local file = fs.open("barrel_categories.json", "w")
+    if file then
+        file.write(textutils.serializeJSON(sortingTurtle.barrelCategories))
+        file.close()
+        return true
+    end
+    return false
+end
+
+-- Function to load barrel categories
+function sortingTurtle.loadBarrelCategories()
+    local file = fs.open("barrel_categories.json", "r")
+    if file then
+        local data = file.readAll()
+        file.close()
+        local success, categories = pcall(textutils.unserializeJSON, data)
+        if success and categories then
+            sortingTurtle.barrelCategories = categories
+            return true
+        end
+    end
+    return false
+end
+
+-- Modify scanBarrels to use categories
 function sortingTurtle.scanBarrels()
     print("\n=== Starting Barrel Scan ===")
     sortingTurtle.barrels = {}
@@ -764,7 +826,7 @@ function sortingTurtle.scanBarrels()
         return
     end
     
-    -- Turn left to face the path (no need to back away)
+    -- Turn left to face the path
     while sortingTurtle.position.facing ~= 3 do  -- 3 is west (left)
         turtle.turnLeft()
         sortingTurtle.addToHistory("turnLeft")
@@ -806,6 +868,12 @@ function sortingTurtle.scanBarrels()
                 -- Print basic barrel info
                 print(string.format("\nFound barrel %d:", sortingTurtle.numBarrels))
                 print(string.format("- Contents: %s", contents.isEmpty and "EMPTY" or "Items present"))
+                
+                -- Print category if assigned
+                local category = sortingTurtle.barrelCategories.assigned[sortingTurtle.numBarrels]
+                if category then
+                    print(string.format("- Category: %s", category.category))
+                end
             end
         end
         
@@ -831,18 +899,14 @@ function sortingTurtle.scanBarrels()
     if sortingTurtle.numBarrels > 0 then
         print(string.format("\nFound %d barrels", sortingTurtle.numBarrels))
         
-        -- Perform bulk analysis of all barrels
-        print("\nAnalyzing barrel organization...")
-        if sortingTurtle.analyzeBulkBarrels() then
-            print("Barrel analysis complete!")
-            -- Print analysis summary
-            for i, barrel in ipairs(sortingTurtle.barrels) do
-                if barrel.analysis then
-                    print(string.format("\nBarrel %d Purpose: %s", i, barrel.analysis.purpose))
-                end
+        -- Assign categories if needed
+        if not next(sortingTurtle.barrelCategories.assigned) then
+            print("\nAssigning categories to barrels...")
+            if sortingTurtle.assignBarrelCategories() then
+                print("Categories assigned successfully!")
+            else
+                print("Warning: Could not assign categories")
             end
-        else
-            print("Warning: Could not complete barrel analysis")
         end
     else
         print("\nNo barrels found! Please set up barrels and restart.")
@@ -930,107 +994,32 @@ Return a brief, one-line description of this barrel's refined purpose.]],
     end
 end
 
--- Function to save barrel categories
-function sortingTurtle.saveBarrelCategories()
-    local file = fs.open("barrel_categories.json", "w")
-    if file then
-        file.write(textutils.serializeJSON(sortingTurtle.barrelCategories))
-        file.close()
-        return true
-    end
-    return false
-end
-
--- Function to load barrel categories
-function sortingTurtle.loadBarrelCategories()
-    local file = fs.open("barrel_categories.json", "r")
-    if file then
-        local data = file.readAll()
-        file.close()
-        local success, categories = pcall(textutils.unserializeJSON, data)
-        if success and categories then
-            sortingTurtle.barrelCategories = categories
-            return true
-        end
-    end
-    return false
-end
-
--- Function to assign category to a barrel
-function sortingTurtle.assignBarrelCategory(barrelNumber, itemName, itemDisplayName)
-    if not sortingTurtle.barrelCategories.assigned[barrelNumber] then
-        -- Build context for category assignment
-        local context = {
-            barrel_number = barrelNumber,
-            first_item = {
-                name = itemName,
-                displayName = itemDisplayName
-            },
-            existing_categories = sortingTurtle.barrelCategories.assigned
-        }
-        
-        -- Ask LLM for category assignment
-        local prompt = string.format([[
-Assign a category to this Minecraft barrel based on its first item.
-Current state:
-%s
-
-Guidelines:
-1. Create a clear, specific category name (e.g., "WOOD_BLOCKS", "STONE_VARIANTS", "METAL_INGOTS")
-2. Consider item's material, purpose, and crafting relationships
-3. Make category broad enough to include related items
-4. Use UPPERCASE with underscores
-5. Be consistent with existing categories
-
-Return ONLY the category name in UPPERCASE_WITH_UNDERSCORES format.]], 
-            textutils.serialize(context))
-        
-        local category = llm.getGeminiResponse(prompt)
-        if category then
-            -- Clean up the category string
-            category = category:upper():gsub("%s+", "_"):gsub("[^A-Z_]", "")
-            sortingTurtle.barrelCategories.assigned[barrelNumber] = {
-                category = category,
-                assigned_time = os.epoch("local"),
-                first_item = {
-                    name = itemName,
-                    displayName = itemDisplayName
-                }
-            }
-            sortingTurtle.saveBarrelCategories()
-            print(string.format("Assigned category %s to barrel %d", category, barrelNumber))
-            return category
-        end
-    end
-    return sortingTurtle.barrelCategories.assigned[barrelNumber].category
-end
-
 -- Modify getBarrelSlot to use categories
 function sortingTurtle.getBarrelSlot(itemName, itemDisplayName)
     if sortingTurtle.numBarrels == 0 then return nil end
     
-    -- Build complete context including categories
+    -- Build context with categories
     local context = {
         item = {
             name = itemName,
-            displayName = itemDisplayName
+            displayName = itemDisplayName,
+            mod_prefix = itemName:match("^([^:]+)"),
+            base_name = itemName:match("^[^:]+:(.+)$")
         },
         barrels = sortingTurtle.barrels,
-        categories = sortingTurtle.barrelCategories.assigned,
-        memory = sortingTurtle.barrelMemory
+        categories = sortingTurtle.barrelCategories.assigned
     }
     
     local prompt = string.format([[
-You are a Minecraft item sorter. Determine the best barrel for this item.
-Complete current state:
+Determine which barrel category best suits this Minecraft item.
+Current state:
 %s
 
 Guidelines:
-1. First, check if any barrel has a matching category for this item
-2. If no matching category exists, find an empty barrel for a new category
-3. Consider item relationships and crafting connections
-4. Maintain consistent categorization
-5. Group similar items together (e.g., all wood types, all stone types)
+1. Match the item to the most appropriate existing category
+2. Consider the item's material, function, and crafting relationships
+3. Be consistent with existing category assignments
+4. Choose the best matching barrel based on its assigned category
 
 Return ONLY a single number between 1 and %d representing the best barrel choice.]], 
         textutils.serialize(context),
@@ -1041,11 +1030,6 @@ Return ONLY a single number between 1 and %d representing the best barrel choice
         response = response:match("^%s*(%d+)%s*$")
         local barrelSlot = tonumber(response)
         if barrelSlot and barrelSlot >= 1 and barrelSlot <= sortingTurtle.numBarrels then
-            -- If this is an empty barrel, assign a category
-            if sortingTurtle.barrels[barrelSlot].contents.isEmpty and 
-               not sortingTurtle.barrelCategories.assigned[barrelSlot] then
-                sortingTurtle.assignBarrelCategory(barrelSlot, itemName, itemDisplayName)
-            end
             return barrelSlot
         end
     end
@@ -1321,14 +1305,14 @@ function sortingTurtle.reorganize()
 end
 
 -- Main loop
-print("=== Smart Sorting Turtle v2.9 ===")
+print("=== Smart Sorting Turtle v3.0 ===")
+print("Loading barrel categories...")
+if not sortingTurtle.loadBarrelCategories() then
+    print("No previous categories found, will assign new ones after scan.")
+end
 print("Loading barrel memory...")
 if not sortingTurtle.loadBarrelMemory() then
     print("No previous barrel memory found, starting fresh.")
-end
-print("Loading barrel categories...")
-if not sortingTurtle.loadBarrelCategories() then
-    print("No previous barrel categories found, starting fresh.")
 end
 print("Setup Instructions:")
 print("1. Place input storage (chest or barrel)")
