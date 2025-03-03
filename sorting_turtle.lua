@@ -771,31 +771,28 @@ end
 -- Function to define categories (called only once during initial scan)
 function sortingTurtle.defineCategories()
     local prompt = [[
-Define a detailed list of Minecraft item categories for sorting items into barrels.
-IMPORTANT: The list MUST start with 'unknown' and end with 'problematic_items'.
-Use SPECIFIC categories that separate different types of blocks and items clearly.
+Define a list of Minecraft item categories for sorting items into barrels.
+IMPORTANT: The list MUST start with 'unknown' category.
 
-Required categories (must include these exact names):
-- unknown (first)
-- dirt_and_grass
-- stone_and_cobble
-- wood_logs
-- wood_planks
-- ores_raw
-- ores_processed
-- farming_crops
-- farming_seeds
-- redstone
-- tools
-- weapons
-- armor
-- decorative
-- dyes
-- mob_drops
-- problematic_items (last)
+Guidelines for creating categories:
+1. Focus on clear patterns in item names and usage
+2. Look for common prefixes and suffixes in item names
+3. Group items by their primary material or function
+4. Consider how items are used together in crafting and gameplay
 
-You may add a few more specific categories, but keep the total under 20 categories.
-Return ONLY category names, one per line, nothing else.]]
+Examples of good pattern-based categories:
+- Items ending in "_log" or containing "log"
+- Items ending in "_planks" or containing "plank"
+- Items containing "stone" or "cobble"
+- Items ending in "_ore" or "_ingot"
+- Items containing "dirt" or "grass"
+- Items ending in "_seeds" or containing "seed"
+- Items containing "redstone" or related to redstone
+- Items ending in "_sword", "_axe", "_pickaxe", etc.
+
+Return ONLY category names, one per line, nothing else.
+Keep categories concise and pattern-based.
+The first category MUST be 'unknown'.]]
 
     print("Requesting categories...")
     local response = llm.getGeminiResponse(prompt)
@@ -815,55 +812,10 @@ Return ONLY category names, one per line, nothing else.]]
         end
     end
     
-    -- Ensure required categories are present
-    local requiredCategories = {
-        "unknown",
-        "dirt_and_grass",
-        "stone_and_cobble",
-        "wood_logs",
-        "wood_planks",
-        "ores_raw",
-        "ores_processed",
-        "farming_crops",
-        "farming_seeds",
-        "redstone",
-        "tools",
-        "weapons",
-        "armor",
-        "decorative",
-        "dyes",
-        "mob_drops",
-        "problematic_items"
-    }
-    
-    -- Check if all required categories are present
-    local missingCategories = {}
-    for _, required in ipairs(requiredCategories) do
-        local found = false
-        for _, category in ipairs(sortingTurtle.categories) do
-            if category == required then
-                found = true
-                break
-            end
-        end
-        if not found then
-            table.insert(missingCategories, required)
-        end
+    -- Ensure unknown is first
+    if sortingTurtle.categories[1] ~= "unknown" then
+        table.insert(sortingTurtle.categories, 1, "unknown")
     end
-    
-    -- Add any missing required categories
-    for _, missing in ipairs(missingCategories) do
-        table.insert(sortingTurtle.categories, missing)
-    end
-    
-    -- Ensure unknown is first and problematic_items is last
-    table.sort(sortingTurtle.categories, function(a, b)
-        if a == "unknown" then return true end
-        if b == "unknown" then return false end
-        if a == "problematic_items" then return false end
-        if b == "problematic_items" then return true end
-        return a < b
-    end)
     
     print("\nDefined categories:")
     for _, category in ipairs(sortingTurtle.categories) do
