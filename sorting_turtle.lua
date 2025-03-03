@@ -108,6 +108,10 @@ function sortingTurtle.readBarrel()
     
     -- Save current selected slot
     local currentSlot = turtle.getSelectedSlot()
+    if not currentSlot then
+        print("Error: Could not get current slot!")
+        return contents
+    end
     
     -- First, try to suck one item to check if barrel is empty
     if not turtle.suck() then
@@ -137,21 +141,21 @@ function sortingTurtle.readBarrel()
         -- Second phase: Scan our inventory for unique items
         for slot = 1, 16 do
             local item = turtle.getItemDetail(slot)
-        if item then
+            if item and item.name then  -- Ensure both item and item.name exist
                 -- Check if we already have this item type recorded
                 local found = false
                 for _, existingItem in ipairs(contents.items) do
                     if existingItem.name == item.name then
                         found = true
                         break
-        end
-    end
-    
+                    end
+                end
+                
                 -- If it's a new item type, add it to our list
                 if not found then
                     table.insert(contents.items, {
                         name = item.name,
-                        displayName = item.displayName or item.name
+                        displayName = item.displayName or item.name  -- Fallback to name if displayName is nil
                     })
                     print("Found item type:", item.displayName or item.name)
                 end
@@ -162,13 +166,17 @@ function sortingTurtle.readBarrel()
         for slot = 1, 16 do
             if turtle.getItemCount(slot) > 0 then
                 turtle.select(slot)
-                turtle.drop()
+                if not turtle.drop() then
+                    print("Warning: Could not return item to barrel!")
+                end
             end
         end
     end
     
     -- Restore original selected slot
-    turtle.select(currentSlot)
+    if not turtle.select(currentSlot) then
+        print("Warning: Could not restore original slot!")
+    end
     
     -- Debug output
     if not contents.isEmpty then
@@ -573,9 +581,25 @@ function sortingTurtle.moveToBarrel(barrelNumber)
         return false
     end
     
+    -- Validate barrel position
+    if not barrel.position or not barrel.level then
+        print("Invalid barrel position data!")
+        return false
+    end
+    
+    -- Validate position is within bounds
+    if barrel.position < 0 or barrel.position >= sortingTurtle.layout.maxHorizontalSteps or
+       barrel.level < 0 or barrel.level >= sortingTurtle.layout.maxVerticalSteps then
+        print("Barrel position out of bounds!")
+        return false
+    end
+    
     -- Turn left to face the barrels if not already facing them
     while sortingTurtle.position.facing ~= 3 do  -- 3 is west (left)
-        turtle.turnLeft()
+        if not turtle.turnLeft() then
+            print("Error: Could not turn left!")
+            return false
+        end
         sortingTurtle.addToHistory("turnLeft")
         sortingTurtle.updatePosition("turnLeft")
     end
@@ -593,13 +617,13 @@ function sortingTurtle.moveToBarrel(barrelNumber)
     local currentStep = 0
     
     while currentStep < horizontalSteps do
-        if turtle.forward() then
-            sortingTurtle.addToHistory("forward")
-            sortingTurtle.updatePosition("forward")
-            currentStep = currentStep + 1
-        else
+        if not turtle.forward() then
+            print(string.format("Cannot move forward to step %d!", currentStep + 1))
             return false
         end
+        sortingTurtle.addToHistory("forward")
+        sortingTurtle.updatePosition("forward")
+        currentStep = currentStep + 1
     end
     
     -- Then move vertically to the correct level
@@ -608,26 +632,29 @@ function sortingTurtle.moveToBarrel(barrelNumber)
     
     -- Move up or down as needed
     while currentLevel < targetLevel do
-        if turtle.up() then
-            sortingTurtle.addToHistory("up")
-            sortingTurtle.updatePosition("up")
-            currentLevel = currentLevel + 1
-        else
+        if not turtle.up() then
+            print(string.format("Cannot move up to level %d!", currentLevel + 1))
             return false
         end
+        sortingTurtle.addToHistory("up")
+        sortingTurtle.updatePosition("up")
+        currentLevel = currentLevel + 1
     end
     while currentLevel > targetLevel do
-        if turtle.down() then
-            sortingTurtle.addToHistory("down")
-            sortingTurtle.updatePosition("down")
-            currentLevel = currentLevel - 1
-        else
+        if not turtle.down() then
+            print(string.format("Cannot move down to level %d!", currentLevel - 1))
             return false
         end
+        sortingTurtle.addToHistory("down")
+        sortingTurtle.updatePosition("down")
+        currentLevel = currentLevel - 1
     end
     
     -- Turn right to face the barrel
-    turtle.turnRight()
+    if not turtle.turnRight() then
+        print("Error: Could not turn to face barrel!")
+        return false
+    end
     sortingTurtle.addToHistory("turnRight")
     sortingTurtle.updatePosition("turnRight")
     
@@ -703,9 +730,9 @@ function sortingTurtle.analyzeBulkBarrels()
             for _, item in ipairs(barrel.contents.items) do
                 barrelContext = barrelContext .. string.format("\n- %s", item.displayName)
             end
-            end
         end
-        
+    end
+    
     -- Create a structured analysis prompt
     local prompt = string.format([[
 You are a Minecraft storage system analyzer. Your task is to analyze this storage system and output a STRICT JSON response.
@@ -1127,6 +1154,7 @@ function sortingTurtle.sortItems()
     
     -- Do initial scan if we haven't done one yet
     if sortingTurtle.numBarrels == 0 then
+        print("No barrels found, performing initial scan...")
         sortingTurtle.scanBarrels()
         if sortingTurtle.numBarrels == 0 then 
             print("Error: No barrels found during scan!")
@@ -1137,35 +1165,18 @@ function sortingTurtle.sortItems()
     print("\nChecking input storage...")
     
     -- Check if we're facing a valid storage block
-    if not sortingTurtle.isValidInputStorage() then
-        print("No chest or barrel detected in front! Please ensure the turtle is facing the input storage.")
+    if not sortingTurtle.checkInputStorage() then
+        print("No valid input storage detected!")
         return
     end
 
-    -- Try to access the storage
-    local hasItems = false
-    for slot = 1, 16 do
-        if turtle.suck() then
-            hasItems = true
-            turtle.drop() -- Put it back for now
-            break
-        end
-    end
-
-    -- If no items to sort, return to initial position
-    if not hasItems then
-        print("No items found in input storage.")
-        return
-    end
-
-    print("Found items to sort!")
-    
     -- Process items in the storage
     local itemsMoved = false
     local itemsSorted = 0
     local itemsToUnknown = 0
+    local errorCount = 0
     
-    while true do
+    while errorCount < 3 do  -- Allow up to 3 errors before giving up
         -- Clear movement history before processing each item
         sortingTurtle.moveHistory = {}
         
@@ -1175,59 +1186,79 @@ function sortingTurtle.sortItems()
         end
         
         local itemDetail = turtle.getItemDetail()
-        if itemDetail then
-            local itemCategory = sortingTurtle.getItemCategory(itemDetail.name)
-            print(string.format("\nProcessing: %s (Category: %s)", 
-                itemDetail.displayName or itemDetail.name,
-                itemCategory))
-            
-            local barrelSlot = sortingTurtle.getBarrelSlot(itemDetail.name, itemDetail.displayName)
-            -- barrelSlot will always be valid now (at minimum it will be 1 for unknown)
-            
-            print(string.format("Moving to barrel %d...", barrelSlot))
-            -- Move to barrel and drop item
-            if sortingTurtle.moveToBarrel(barrelSlot) then
-                if turtle.drop() then
-                    itemsMoved = true
-                    if barrelSlot == 1 then
-                        itemsToUnknown = itemsToUnknown + 1
-                    else
-                        itemsSorted = itemsSorted + 1
-                    end
-                    print(string.format("Stored in barrel %d", barrelSlot))
+        if not itemDetail or not itemDetail.name then
+            print("Warning: Invalid item data!")
+            errorCount = errorCount + 1
+            continue
+        end
+        
+        local itemCategory = sortingTurtle.getItemCategory(itemDetail.name)
+        print(string.format("\nProcessing: %s (Category: %s)", 
+            itemDetail.displayName or itemDetail.name,
+            itemCategory))
+        
+        local barrelSlot = sortingTurtle.getBarrelSlot(itemDetail.name, itemDetail.displayName)
+        if not barrelSlot then
+            print("Error: Could not determine barrel slot!")
+            -- Try to return item to input
+            turtle.drop()
+            errorCount = errorCount + 1
+            continue
+        end
+        
+        print(string.format("Moving to barrel %d...", barrelSlot))
+        -- Move to barrel and drop item
+        if sortingTurtle.moveToBarrel(barrelSlot) then
+            if turtle.drop() then
+                itemsMoved = true
+                if barrelSlot == 1 then
+                    itemsToUnknown = itemsToUnknown + 1
                 else
-                    print("Warning: Could not store item in barrel!")
-                    -- If we can't store in target barrel, use unknown barrel
-                    sortingTurtle.returnToInitial()
-                    if sortingTurtle.moveToBarrel(1) then
-                        if turtle.drop() then
-                            itemsToUnknown = itemsToUnknown + 1
-                            print("Stored in unknown barrel")
-                        else
-                            print("Error: Could not store in unknown barrel!")
-                        end
+                    itemsSorted = itemsSorted + 1
+                end
+                print(string.format("Stored in barrel %d", barrelSlot))
+                errorCount = 0  -- Reset error count on success
+            else
+                print("Warning: Could not store item in barrel!")
+                -- If we can't store in target barrel, use unknown barrel
+                sortingTurtle.returnToInitial()
+                if sortingTurtle.moveToBarrel(1) then
+                    if turtle.drop() then
+                        itemsToUnknown = itemsToUnknown + 1
+                        print("Stored in unknown barrel")
+                        errorCount = 0  -- Reset error count on successful fallback
+                    else
+                        print("Error: Could not store in unknown barrel!")
+                        errorCount = errorCount + 1
                     end
+                else
+                    print("Error: Could not reach unknown barrel!")
+                    errorCount = errorCount + 1
                 end
             end
-            
-            -- Return to initial position using movement history
+        else
+            print("Error: Could not reach target barrel!")
+            -- Try to return item to input
             sortingTurtle.returnToInitial()
+            turtle.drop()
+            errorCount = errorCount + 1
+        end
+        
+        -- Return to initial position using movement history
+        if not sortingTurtle.returnToInitial() then
+            print("Warning: Could not return to initial position!")
+            -- Try emergency return procedure
+            sortingTurtle.returnHome()
         end
         
         -- Check if there are more items to process
-        local hasMoreItems = false
-        for slot = 1, 16 do
-            if turtle.suck() then
-                hasMoreItems = true
-                turtle.drop() -- Put it back for now
-                break
-            end
-        end
-        
-        -- If no more items, break the loop
-        if not hasMoreItems then
+        if not sortingTurtle.checkInputStorage() then
             break
         end
+    end
+    
+    if errorCount >= 3 then
+        print("\nWarning: Stopped sorting due to multiple errors!")
     end
     
     -- Print summary
@@ -1235,6 +1266,9 @@ function sortingTurtle.sortItems()
         print("\nSorting complete:")
         print(string.format("- Items sorted to categories: %d", itemsSorted))
         print(string.format("- Items sent to unknown: %d", itemsToUnknown))
+        if errorCount > 0 then
+            print(string.format("- Errors encountered: %d", errorCount))
+        end
     else
         print("\nNo items were sorted")
     end
@@ -1378,50 +1412,6 @@ function sortingTurtle.scanBarrels()
     end
     
     sortingTurtle.lastScanTime = os.epoch("local")
-end
-
--- Function to check if there are items in the input storage
-function sortingTurtle.checkInputStorage()
-    -- Make sure we're facing the right direction (north)
-    while sortingTurtle.position.facing ~= 0 do
-        turtle.turnLeft()
-        sortingTurtle.position.facing = (sortingTurtle.position.facing - 1) % 4
-    end
-    
-    -- Check if we're facing valid storage
-    local success, data = turtle.inspect()
-    if not success or not data then
-        print("No storage block detected in front!")
-        return false
-    end
-    
-    -- Verify it's a valid storage block
-    if not (data.name == "minecraft:chest" or 
-            data.name == "minecraft:barrel" or 
-            data.name:find("chest") or 
-            data.name:find("barrel") or 
-            data.name:find("storage")) then
-        print("Invalid storage block detected: " .. (data.name or "unknown"))
-        return false
-    end
-    
-    -- Try to detect items
-    local hasItems = false
-    local currentSlot = turtle.getSelectedSlot()
-    
-    -- Try each slot until we find an item
-    for slot = 1, 16 do
-        turtle.select(slot)
-        if turtle.suck(1) then  -- Try to grab just one item
-            turtle.drop()  -- Put it back immediately
-            hasItems = true
-            break
-        end
-    end
-    
-    -- Restore original slot
-    turtle.select(currentSlot)
-    return hasItems
 end
 
 -- Main loop
