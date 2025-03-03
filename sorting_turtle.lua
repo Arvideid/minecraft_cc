@@ -52,26 +52,41 @@ end
 function sortingTurtle.returnToInitial()
     print("Returning to initial position...")
     
-    -- Reverse through movement history
-    for i = #sortingTurtle.moveHistory, 1, -1 do
-        local reverseMove = sortingTurtle.getReverseMovement(sortingTurtle.moveHistory[i])
-        if reverseMove then
-            if not turtle[reverseMove]() then
-                print("Warning: Could not complete reverse movement!")
-                break
-            end
-            -- Update position for the reverse movement
-            if reverseMove == "forward" or reverseMove == "back" or 
-               reverseMove == "up" or reverseMove == "down" or
-               reverseMove == "turnLeft" or reverseMove == "turnRight" then
-                sortingTurtle.updatePosition(reverseMove)
-            end
-        end
+    -- First turn to face west (left) to align with the barrel path
+    while sortingTurtle.position.facing ~= 3 do  -- 3 is west (left)
+        turtle.turnLeft()
+        sortingTurtle.addToHistory("turnLeft")
+        sortingTurtle.updatePosition("turnLeft")
     end
     
-    -- Clear movement history after returning
-    sortingTurtle.moveHistory = {}
-    print("Returned to initial position")
+    -- Move back along the barrel path
+    while sortingTurtle.position.x < 0 do
+        if not turtle.forward() then
+            print("Warning: Could not move back along barrel path!")
+            break
+        end
+        sortingTurtle.addToHistory("forward")
+        sortingTurtle.updatePosition("forward")
+    end
+    
+    -- Turn to face north (input storage)
+    while sortingTurtle.position.facing ~= 0 do  -- 0 is north
+        turtle.turnLeft()
+        sortingTurtle.addToHistory("turnLeft")
+        sortingTurtle.updatePosition("turnLeft")
+    end
+    
+    if sortingTurtle.position.x == 0 and sortingTurtle.position.y == 0 and 
+       sortingTurtle.position.z == 0 and sortingTurtle.position.facing == 0 then
+        print("Successfully returned to initial position!")
+        return true
+    else
+        print("Warning: Could not return to exact initial position!")
+        print(string.format("Current position: x=%d, y=%d, z=%d, facing=%d",
+            sortingTurtle.position.x, sortingTurtle.position.y,
+            sortingTurtle.position.z, sortingTurtle.position.facing))
+        return false
+    end
 end
 
 -- After the configuration section, add new environment tracking
@@ -935,11 +950,7 @@ end
 function sortingTurtle.handleProblematicItem(itemName, itemDisplayName)
     print(string.format("\nAttempting to handle problematic item: %s", itemDisplayName or itemName))
     
-    -- Rescan barrels to find empty ones and update categories
-    print("Rescanning barrels to find empty ones...")
-    sortingTurtle.scanBarrels()
-    
-    -- If we found empty barrels, try to define new categories
+    -- Check if we have any empty barrels in our current knowledge
     local hasEmptyBarrels = false
     for _, barrel in ipairs(sortingTurtle.barrels) do
         if barrel.contents.isEmpty then
@@ -960,25 +971,22 @@ function sortingTurtle.handleProblematicItem(itemName, itemDisplayName)
                 return true
             end
         end
+    else
+        print("No empty barrels available for new categories")
     end
     
     return false
 end
 
--- Modify sortItems function to handle problematic items
+-- Modify sortItems function to remove redundant scanning
 function sortingTurtle.sortItems()
     -- Clear movement history before starting to sort
     sortingTurtle.moveHistory = {}
     
-    -- Check if we need to rescan barrels
-    local currentTime = os.epoch("local")
-    if sortingTurtle.numBarrels == 0 or 
-       (currentTime - sortingTurtle.lastScanTime) > sortingTurtle.config.SCAN_INTERVAL then
-        sortingTurtle.scanBarrels()
-        -- If no barrels found, just return
-        if sortingTurtle.numBarrels == 0 then 
-            return 
-        end
+    -- Check if we have barrels
+    if sortingTurtle.numBarrels == 0 then
+        print("No barrels found! Cannot sort items.")
+        return
     end
     
     print("\nChecking input storage...")
@@ -1307,7 +1315,6 @@ print("Waiting for items in input storage...")
 
 local lastCheckTime = 0
 local IDLE_CHECK_INTERVAL = 2  -- Check for items every 2 seconds when idle
-local SCAN_COOLDOWN = 300     -- Minimum time between barrel rescans (5 minutes)
 
 while true do
     local currentTime = os.epoch("local")
@@ -1316,19 +1323,8 @@ while true do
     if sortingTurtle.hasItemsInStorage() then
         print("\nDetected items in storage!")
         
-        -- Check if we need to rescan barrels (if it's been more than 5 minutes)
-        if currentTime - sortingTurtle.lastScanTime > SCAN_COOLDOWN then
-            print("Performing periodic barrel scan...")
-            sortingTurtle.scanBarrels()
-            if sortingTurtle.numBarrels == 0 then
-                print("Error: No barrels found during rescan!")
-                print("Please check barrel setup and restart the program.")
-                break
-            end
-        end
-        
         -- Sort the items
-    sortingTurtle.sortItems()
+        sortingTurtle.sortItems()
         print("\nWaiting for more items...")
         lastCheckTime = currentTime
     else
