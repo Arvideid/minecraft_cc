@@ -1291,7 +1291,6 @@ print("Waiting for items in input storage...")
 
 local lastCheckTime = 0
 local IDLE_CHECK_INTERVAL = 2  -- Check for items every 2 seconds when idle
-local SCAN_COOLDOWN = 300     -- Minimum time between barrel rescans (5 minutes)
 
 while true do
     local currentTime = os.epoch("local")
@@ -1300,19 +1299,17 @@ while true do
     if sortingTurtle.hasItemsInStorage() then
         print("\nDetected items in storage!")
         
-        -- Check if we need to rescan barrels (if it's been more than 5 minutes)
-        if currentTime - sortingTurtle.lastScanTime > SCAN_COOLDOWN then
-            print("Performing periodic barrel scan...")
-            sortingTurtle.scanBarrels()
-            if sortingTurtle.numBarrels == 0 then
-                print("Error: No barrels found during rescan!")
-                print("Please check barrel setup and restart the program.")
-                break
-            end
+        -- Scan barrels and update categories every time we find new items
+        print("Scanning barrels and updating categories...")
+        sortingTurtle.scanBarrels()
+        if sortingTurtle.numBarrels == 0 then
+            print("Error: No barrels found during scan!")
+            print("Please check barrel setup and restart the program.")
+            break
         end
         
         -- Sort the items
-    sortingTurtle.sortItems()
+        sortingTurtle.sortItems()
         print("\nWaiting for more items...")
         lastCheckTime = currentTime
     else
