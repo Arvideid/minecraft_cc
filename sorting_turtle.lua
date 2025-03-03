@@ -92,44 +92,53 @@ function sortingTurtle.readBarrel()
         isEmpty = true
     }
     
-    -- Turn to face the barrel if not already facing it
-    local success, data = turtle.inspect()
-    if not success or not data then
-        return contents
-    end
+    -- Save current selected slot
+    local currentSlot = turtle.getSelectedSlot()
     
-    -- Try to wrap the barrel as a peripheral
-    local barrel = peripheral.wrap("front")
-    if not barrel then
-        print("Could not access barrel as peripheral")
-        return contents
-    end
+    -- Try to read all items
+    local totalSlots = 16  -- Standard turtle inventory size
+    local startingEmptySlots = sortingTurtle.countEmptySlots()
     
-    -- Get list of items in the barrel
-    local items = barrel.list()
-    if not items then
-        print("Could not read barrel contents")
-        return contents
+    -- First, suck a single item to check if there's anything
+    if not turtle.suck() then
+        return contents  -- Barrel is empty
     end
+    turtle.drop()  -- Put it back
     
-    -- Process each slot in the barrel
-    for slot, item in pairs(items) do
-        contents.isEmpty = false
-        -- Add item to contents if not already present
-        local found = false
-        for _, existingItem in ipairs(contents.items) do
-            if existingItem.name == item.name then
-                found = true
-                break
+    -- Now we know there are items, let's read them systematically
+    for i = 1, totalSlots do
+        turtle.select(i)
+        if turtle.suck(1) then  -- Try to get just 1 item
+            local item = turtle.getItemDetail()
+            if item then
+                contents.isEmpty = false
+                -- Add item to contents if not already present
+                local found = false
+                for _, existingItem in ipairs(contents.items) do
+                    if existingItem.name == item.name then
+                        found = true
+                        break
+                    end
+                end
+                if not found then
+                    table.insert(contents.items, {
+                        name = item.name,
+                        displayName = item.displayName or item.name
+                    })
+                end
             end
+            -- Put the item back
+            turtle.drop()
         end
-        if not found then
-            table.insert(contents.items, {
-                name = item.name,
-                displayName = item.displayName or item.name,
-                count = item.count
-            })
-        end
+    end
+    
+    -- Restore selected slot
+    turtle.select(currentSlot)
+    
+    -- Debug output
+    print("Barrel contents:")
+    for _, item in ipairs(contents.items) do
+        print("- " .. (item.displayName or item.name))
     end
     
     return contents
