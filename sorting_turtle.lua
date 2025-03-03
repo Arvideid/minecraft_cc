@@ -95,50 +95,92 @@ function sortingTurtle.readBarrel()
     -- Save current selected slot
     local currentSlot = turtle.getSelectedSlot()
     
-    -- Try to read all items
-    local totalSlots = 16  -- Standard turtle inventory size
-    local startingEmptySlots = sortingTurtle.countEmptySlots()
-    
-    -- First, suck a single item to check if there's anything
+    -- First, try to suck one item to check if barrel is empty
     if not turtle.suck() then
+        turtle.select(currentSlot)
         return contents  -- Barrel is empty
     end
     turtle.drop()  -- Put it back
     
-    -- Now we know there are items, let's read them systematically
-    for i = 1, totalSlots do
-        turtle.select(i)
-        if turtle.suck(1) then  -- Try to get just 1 item
-            local item = turtle.getItemDetail()
-            if item then
-                contents.isEmpty = false
-                -- Add item to contents if not already present
-                local found = false
-                for _, existingItem in ipairs(contents.items) do
-                    if existingItem.name == item.name then
-                        found = true
-                        break
-                    end
-                end
-                if not found then
-                    table.insert(contents.items, {
-                        name = item.name,
-                        displayName = item.displayName or item.name
-                    })
+    print("Reading barrel contents...")
+    
+    -- Keep track of what slots we've used
+    local usedSlots = {}
+    
+    -- Keep sucking items until the barrel is empty
+    while turtle.suck() do
+        local slot = turtle.getSelectedSlot()
+        local item = turtle.getItemDetail()
+        
+        if item then
+            contents.isEmpty = false
+            
+            -- Check if we already have this item type recorded
+            local found = false
+            for _, existingItem in ipairs(contents.items) do
+                if existingItem.name == item.name then
+                    found = true
+                    break
                 end
             end
-            -- Put the item back
+            
+            -- If it's a new item type, add it to our list
+            if not found then
+                table.insert(contents.items, {
+                    name = item.name,
+                    displayName = item.displayName or item.name
+                })
+                print("Found new item type:", item.displayName or item.name)
+            end
+        end
+        
+        -- Mark this slot as used
+        usedSlots[slot] = true
+        
+        -- Select next empty slot
+        local nextSlot = nil
+        for i = 1, 16 do
+            if not usedSlots[i] then
+                nextSlot = i
+                break
+            end
+        end
+        
+        -- If no empty slots, put items back and continue
+        if not nextSlot then
+            -- Return all items to barrel
+            for i = 1, 16 do
+                if turtle.getItemCount(i) > 0 then
+                    turtle.select(i)
+                    turtle.drop()
+                end
+            end
+            -- Clear used slots tracking
+            usedSlots = {}
+        else
+            turtle.select(nextSlot)
+        end
+    end
+    
+    -- Return all remaining items to barrel
+    for i = 1, 16 do
+        if turtle.getItemCount(i) > 0 then
+            turtle.select(i)
             turtle.drop()
         end
     end
     
-    -- Restore selected slot
+    -- Restore original selected slot
     turtle.select(currentSlot)
     
     -- Debug output
-    print("Barrel contents:")
-    for _, item in ipairs(contents.items) do
-        print("- " .. (item.displayName or item.name))
+    if not contents.isEmpty then
+        print("\nBarrel contains:")
+        for _, item in ipairs(contents.items) do
+            print("- " .. (item.displayName or item.name))
+        end
+    else
+        print("Barrel is empty")
     end
     
     return contents
