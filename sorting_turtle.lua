@@ -32,6 +32,27 @@ sortingTurtle.barrelAssignments = {}  -- Will store barrel -> category mappings
 -- Add after sortingTurtle initialization
 sortingTurtle.problematicItems = {}  -- Track items that couldn't be sorted
 
+-- Function to send chat messages
+function sortingTurtle.sendChat(message, isPrivate, playerName)
+    if not commands then
+        print("Commands API not available. Make sure command access is enabled.")
+        return false
+    end
+    
+    local success, err
+    if isPrivate and playerName then
+        success, err = commands.exec("tell " .. playerName .. " " .. message)
+    else
+        success, err = commands.exec("say " .. message)
+    end
+    
+    if not success and err then
+        print("Failed to send chat message: " .. err)
+        return false
+    end
+    return true
+end
+
 -- Function to add movement to history
 function sortingTurtle.addToHistory(movement)
     table.insert(sortingTurtle.moveHistory, movement)
@@ -109,6 +130,8 @@ function sortingTurtle.readBarrel()
     end
     turtle.drop()  -- Put it back
     
+    print("Reading barrel contents...")
+    
     -- First phase: Get ALL items from the barrel
     local startingEmptySlots = sortingTurtle.countEmptySlots()
     local itemsGrabbed = false
@@ -128,15 +151,15 @@ function sortingTurtle.readBarrel()
         -- Second phase: Scan our inventory for unique items
         for slot = 1, 16 do
             local item = turtle.getItemDetail(slot)
-            if item then
+        if item then
                 -- Check if we already have this item type recorded
                 local found = false
                 for _, existingItem in ipairs(contents.items) do
                     if existingItem.name == item.name then
                         found = true
                         break
-                    end
-                end
+        end
+    end
     
                 -- If it's a new item type, add it to our list
                 if not found then
@@ -144,6 +167,7 @@ function sortingTurtle.readBarrel()
                         name = item.name,
                         displayName = item.displayName or item.name
                     })
+                    print("Found item type:", item.displayName or item.name)
                 end
             end
         end
@@ -159,6 +183,16 @@ function sortingTurtle.readBarrel()
     
     -- Restore original selected slot
     turtle.select(currentSlot)
+    
+    -- Debug output
+    if not contents.isEmpty then
+        print("\nBarrel contains:")
+        for _, item in ipairs(contents.items) do
+            print("- " .. (item.displayName or item.name))
+        end
+    else
+        print("Barrel is empty")
+    end
     
     return contents
 end
@@ -653,9 +687,9 @@ function sortingTurtle.analyzeBulkBarrels()
             for _, item in ipairs(barrel.contents.items) do
                 barrelContext = barrelContext .. string.format("\n- %s", item.displayName)
             end
+            end
         end
-    end
-    
+        
     -- Create a structured analysis prompt
     local prompt = string.format([[
 You are a Minecraft storage system analyzer. Your task is to analyze this storage system and output a STRICT JSON response.
@@ -737,7 +771,7 @@ create
 food
 problematic_items]]
 
-    print("=== Defining Categories ===")
+    print("Requesting categories...")
     local response = llm.getGeminiResponse(prompt)
     
     if not response then
@@ -779,11 +813,25 @@ problematic_items]]
         sortingTurtle.categories = {"unknown", "problematic_items"}
     end
     
-    print("\nCategories:")
-    for _, category in ipairs(sortingTurtle.categories) do
-        print("  " .. category)
+    -- Send categories to chat
+    sortingTurtle.sendChat("Defined storage categories:")
+    local categoryList = ""
+    for i, category in ipairs(sortingTurtle.categories) do
+        categoryList = categoryList .. category
+        if i < #sortingTurtle.categories then
+            categoryList = categoryList .. ", "
+        end
+        -- Send in chunks to avoid message length limits
+        if i % 5 == 0 or i == #sortingTurtle.categories then
+            sortingTurtle.sendChat(categoryList)
+            categoryList = ""
+        end
     end
-    print("===================")
+    
+    print("\nDefined categories:")
+    for _, category in ipairs(sortingTurtle.categories) do
+        print("- " .. category)
+    end
     return true
 end
 
@@ -825,7 +873,6 @@ ores
 One category per line, matching the number of barrels.]], 
         categoriesText, barrelContext)
 
-    print("=== Assigning Categories ===")
     local response = llm.getGeminiResponse(prompt)
     if not response then
         print("Error: No category assignments received")
@@ -863,15 +910,25 @@ One category per line, matching the number of barrels.]],
     -- Clear existing assignments
     sortingTurtle.barrelAssignments = {}
     
-    -- Assign categories to barrels
-    print("\nBarrel Assignments:")
+    -- Send initial message
+    sortingTurtle.sendChat("Assigning categories to barrels:")
+    
+    -- Assign categories to barrels and send to chat
+    local assignmentMessage = ""
     for i, category in ipairs(assignments) do
         if i <= sortingTurtle.numBarrels then
             sortingTurtle.barrelAssignments[i] = category
-            print(string.format("  Barrel %d -> %s", i, category))
+            assignmentMessage = assignmentMessage .. string.format("Barrel %d -> %s", i, category)
+            -- Send in chunks of 3 assignments or when we reach the end
+            if i % 3 == 0 or i == sortingTurtle.numBarrels then
+                sortingTurtle.sendChat(assignmentMessage)
+                assignmentMessage = ""
+            else
+                assignmentMessage = assignmentMessage .. " | "
+            end
+            print(string.format("Barrel %d -> %s", i, category))
         end
     end
-    print("===================")
     
     return true
 end
@@ -1002,7 +1059,7 @@ function sortingTurtle.handleProblematicItem(itemName, itemDisplayName)
     return false
 end
 
--- Function to sort items
+-- Modify sortItems function to handle problematic items
 function sortingTurtle.sortItems()
     -- Clear movement history before starting to sort
     sortingTurtle.moveHistory = {}
@@ -1011,14 +1068,18 @@ function sortingTurtle.sortItems()
     if sortingTurtle.numBarrels == 0 then
         sortingTurtle.scanBarrels()
         if sortingTurtle.numBarrels == 0 then 
-            print("Error: No barrels found!")
+            print("Error: No barrels found during scan!")
+            sortingTurtle.sendChat("Error: No barrels found! Please set up barrels.")
             return 
         end
     end
     
+    print("\nChecking input storage...")
+    
     -- Check if we're facing a valid storage block
     if not sortingTurtle.isValidInputStorage() then
-        print("Error: No input storage found!")
+        print("No chest or barrel detected in front! Please ensure the turtle is facing the input storage.")
+        sortingTurtle.sendChat("Error: No input storage found! Please check setup.")
         return
     end
 
@@ -1034,10 +1095,12 @@ function sortingTurtle.sortItems()
 
     -- If no items to sort, return to initial position
     if not hasItems then
+        print("No items found in input storage.")
         return
     end
 
-    print("=== Sorting Items ===")
+    sortingTurtle.sendChat("Starting to sort items...")
+    print("Found items to sort!")
     
     -- Process items in the storage
     local itemsMoved = false
@@ -1055,8 +1118,22 @@ function sortingTurtle.sortItems()
         
         local itemDetail = turtle.getItemDetail()
         if itemDetail then
+            local itemCategory = sortingTurtle.getItemCategory(itemDetail.name)
+            print(string.format("\nProcessing: %s (Category: %s)", 
+                itemDetail.displayName or itemDetail.name,
+                itemCategory))
+            
             local barrelSlot = sortingTurtle.getBarrelSlot(itemDetail.name, itemDetail.displayName)
             
+            -- Send message about where item is being sorted
+            local targetCategory = sortingTurtle.barrelAssignments[barrelSlot] or "unknown"
+            sortingTurtle.sendChat(string.format("Sorting %s to %s (Barrel %d)", 
+                itemDetail.displayName or itemDetail.name,
+                targetCategory,
+                barrelSlot))
+            
+            print(string.format("Moving to barrel %d...", barrelSlot))
+            -- Move to barrel and drop item
             if sortingTurtle.moveToBarrel(barrelSlot) then
                 if turtle.drop() then
                     itemsMoved = true
@@ -1065,12 +1142,19 @@ function sortingTurtle.sortItems()
                     else
                         itemsSorted = itemsSorted + 1
                     end
+                    print(string.format("Stored in barrel %d", barrelSlot))
                 else
+                    print("Warning: Could not store item in barrel!")
+                    sortingTurtle.sendChat("Warning: Failed to store " .. (itemDetail.displayName or itemDetail.name))
                     -- If we can't store in target barrel, use unknown barrel
                     sortingTurtle.returnToInitial()
                     if sortingTurtle.moveToBarrel(1) then
                         if turtle.drop() then
                             itemsToUnknown = itemsToUnknown + 1
+                            print("Stored in unknown barrel")
+                        else
+                            print("Error: Could not store in unknown barrel!")
+                            sortingTurtle.sendChat("Error: Failed to store item in unknown barrel!")
                         end
                     end
                 end
@@ -1098,15 +1182,44 @@ function sortingTurtle.sortItems()
     
     -- Print summary
     if itemsMoved then
-        print(string.format("\nSorted: %d items (%d categorized, %d unknown)", 
-            itemsSorted + itemsToUnknown, itemsSorted, itemsToUnknown))
+        local summary = string.format("Sorting complete! Sorted: %d items (%d to categories, %d to unknown)", 
+            itemsSorted + itemsToUnknown, itemsSorted, itemsToUnknown)
+        print("\nSorting complete:")
+        print(string.format("- Items sorted to categories: %d", itemsSorted))
+        print(string.format("- Items sent to unknown: %d", itemsToUnknown))
+        sortingTurtle.sendChat(summary)
+    else
+        print("\nNo items were sorted")
+        sortingTurtle.sendChat("No items were sorted in this run.")
     end
-    print("===================")
 end
 
--- Function to scan barrels
+-- Function to check if there are items in the input storage without taking them
+function sortingTurtle.hasItemsInStorage()
+    -- Try to detect items without actually taking them
+    local success, data = turtle.inspect()
+    if success and data then
+        -- Check if it's a valid storage block
+        if data.name == "minecraft:chest" or 
+           data.name == "minecraft:barrel" or 
+           data.name:find("chest") or 
+           data.name:find("barrel") or 
+           data.name:find("storage") then
+            
+            -- Peek at the inventory without removing items
+            if turtle.suck() then
+                turtle.drop()  -- Put it right back
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- Optimized scan function that only scans in the direction of barrels
 function sortingTurtle.scanBarrels()
-    print("=== Scanning Barrels ===")
+    print("\n=== Starting Barrel Scan ===")
+    sortingTurtle.sendChat("Starting barrel scan...")
     sortingTurtle.barrels = {}
     sortingTurtle.numBarrels = 0
     local steps = 0
@@ -1116,7 +1229,8 @@ function sortingTurtle.scanBarrels()
     
     -- Check fuel before starting
     if not sortingTurtle.checkFuel() then
-        print("Error: Insufficient fuel!")
+        print("Cannot scan: Insufficient fuel!")
+        sortingTurtle.sendChat("Error: Cannot scan - insufficient fuel!")
         return
     end
     
@@ -1132,11 +1246,12 @@ function sortingTurtle.scanBarrels()
         sortingTurtle.addToHistory("forward")
         sortingTurtle.updatePosition("forward")
     else
-        print("Error: Cannot move to scan position!")
+        print("Cannot move forward to start scanning!")
         return
     end
     
     -- Single pass: Move and scan barrels
+    print("Scanning for barrels...")
     while steps < sortingTurtle.config.MAX_STEPS do
         -- Turn right to face potential barrel
         turtle.turnRight()
@@ -1157,6 +1272,10 @@ function sortingTurtle.scanBarrels()
                 
                 table.insert(sortingTurtle.barrels, barrelInfo)
                 sortingTurtle.numBarrels = sortingTurtle.numBarrels + 1
+                
+                -- Print basic barrel info
+                print(string.format("\nFound barrel %d:", sortingTurtle.numBarrels))
+                print(string.format("- Contents: %s", contents.isEmpty and "EMPTY" or "Items present"))
             end
         end
         
@@ -1180,46 +1299,67 @@ function sortingTurtle.scanBarrels()
     
     -- Print barrel summary
     if sortingTurtle.numBarrels > 0 then
+        local summary = string.format("Scan complete! Found %d barrels", sortingTurtle.numBarrels)
         print(string.format("\nFound %d barrels", sortingTurtle.numBarrels))
+        sortingTurtle.sendChat(summary)
         
-        -- Define categories if this is the first scan
+        -- Define categories if this is the first scan (categories table is empty)
         if next(sortingTurtle.categories) == nil then
-            if not sortingTurtle.defineCategories() then
+            print("\nDefining storage categories...")
+            if sortingTurtle.defineCategories() then
+                print("Categories defined successfully!")
+                sortingTurtle.sendChat("Storage categories defined successfully!")
+            else
                 print("Error: Could not define categories!")
+                sortingTurtle.sendChat("Error: Failed to define storage categories!")
                 return
             end
         end
         
         -- Assign categories to barrels
-        if not sortingTurtle.assignBarrelCategories() then
-            print("Error: Could not assign categories!")
+        print("\nAssigning categories to barrels...")
+        if sortingTurtle.assignBarrelCategories() then
+            print("Category assignment complete!")
+            sortingTurtle.sendChat("Barrel categories assigned successfully!")
+            -- Print category assignments
+            for barrel, category in pairs(sortingTurtle.barrelAssignments) do
+                print(string.format("Barrel %d: %s", barrel, category))
+            end
+        else
+            print("Warning: Could not assign categories to barrels")
+            sortingTurtle.sendChat("Warning: Failed to assign categories to barrels")
         end
     else
-        print("\nNo barrels found!")
+        print("\nNo barrels found! Please set up barrels and restart.")
+        sortingTurtle.sendChat("Error: No barrels found! Please set up barrels.")
     end
-    print("===================")
     
     sortingTurtle.lastScanTime = os.epoch("local")
 end
 
 -- Main loop
-print("=== Smart Sorting Turtle v3.0 ===")
-print("Place input storage in front")
-print("Place barrels in line to the left")
-print("Layout: [S][B][B][B]...")
-print("        [T]")
-print("T=Turtle, S=Storage, B=Barrels")
+print("=== Smart Sorting Turtle v2.9 ===")
+print("Setup Instructions:")
+print("1. Place input storage (chest or barrel)")
+print("2. Place sorting barrels in a line to the left of the input storage")
+print("3. Place turtle directly behind the input storage, facing it")
+print("4. Ensure all barrels are accessible")
+print("\nLayout should look like this:")
+print("[S][B][B][B]...")
+print("[T]")
+print("Where: T=Turtle (facing up), S=Input Storage, B=Sorting Barrels")
 
 -- Do initial barrel scan
-print("\nScanning barrels...")
+print("\nPerforming initial barrel scan...")
 sortingTurtle.scanBarrels()
 
 if sortingTurtle.numBarrels == 0 then
-    print("Error: No barrels found!")
+    print("\nNo barrels found! Please set up barrels and restart the program.")
     return sortingTurtle
 end
 
-print("\nReady to sort!")
+print("\nReady to sort items!")
+print("Waiting for items in input storage...")
 
 local lastCheckTime = 0
 local IDLE_CHECK_INTERVAL = 2  -- Check for items every 2 seconds when idle
@@ -1229,22 +1369,28 @@ while true do
     
     -- Check if there are items to sort
     if sortingTurtle.hasItemsInStorage() then
-        -- Scan barrels and update categories
+        print("\nDetected items in storage!")
+        
+        -- Scan barrels and update categories every time we find new items
+        print("Scanning barrels and updating categories...")
         sortingTurtle.scanBarrels()
         if sortingTurtle.numBarrels == 0 then
-            print("Error: No barrels found!")
+            print("Error: No barrels found during scan!")
+            print("Please check barrel setup and restart the program.")
             break
         end
         
         -- Sort the items
         sortingTurtle.sortItems()
+        print("\nWaiting for more items...")
+        lastCheckTime = currentTime
     else
         -- If we haven't checked recently, update the idle message
         if currentTime - lastCheckTime > 30 then  -- Show message every 30 seconds
-            print("Waiting for items... (Ctrl+T to exit)")
+            print("Waiting for items... (Press Ctrl+T to exit)")
             lastCheckTime = currentTime
         end
-        os.sleep(IDLE_CHECK_INTERVAL)
+        os.sleep(IDLE_CHECK_INTERVAL)  -- Wait before checking again
     end
 end
 
