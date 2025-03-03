@@ -32,6 +32,9 @@ sortingTurtle.barrelAssignments = {}  -- Will store barrel -> category mappings
 -- Add after sortingTurtle initialization
 sortingTurtle.problematicItems = {}  -- Track items that couldn't be sorted
 
+-- Add after the category system initialization
+sortingTurtle.itemCategories = {}  -- Cache for item -> category mappings
+
 -- Function to add movement to history
 function sortingTurtle.addToHistory(movement)
     table.insert(sortingTurtle.moveHistory, movement)
@@ -793,9 +796,9 @@ function sortingTurtle.assignBarrelCategories()
                 table.insert(items, item.displayName)
             end
             barrelContext = barrelContext .. table.concat(items, ", ")
-        end
     end
-    
+end
+
     local categoriesText = table.concat(sortingTurtle.categories, "\n")
     local prompt = string.format([[
 Assign ONE category to each barrel based on its contents.
@@ -857,11 +860,33 @@ One category per line, matching the number of barrels.]],
     return true
 end
 
--- Enhanced getBarrelSlot function that uses category assignments
+-- Enhanced getBarrelSlot function with caching
 function sortingTurtle.getBarrelSlot(itemName, itemDisplayName)
     if sortingTurtle.numBarrels == 0 then return nil end
     
-    -- First, determine which category this item belongs to
+    -- Check cache first
+    local cachedCategory = sortingTurtle.itemCategories[itemName]
+    if cachedCategory then
+        print(string.format("Using cached category '%s' for %s", cachedCategory, itemDisplayName or itemName))
+        -- Find barrel with this category
+        for barrelNum, category in pairs(sortingTurtle.barrelAssignments) do
+            if category == cachedCategory then
+                if not sortingTurtle.barrels[barrelNum].contents.isEmpty then
+                    -- Found a barrel with same category and items
+                    return barrelNum
+                end
+            end
+        end
+        
+        -- If no barrel with items found, try empty barrel with same category
+        for barrelNum, category in pairs(sortingTurtle.barrelAssignments) do
+            if category == cachedCategory and sortingTurtle.barrels[barrelNum].contents.isEmpty then
+                return barrelNum
+            end
+        end
+    end
+    
+    -- If not in cache, determine category
     local categoriesText = table.concat(sortingTurtle.categories, "\n")
     local prompt = string.format([[
 Which category best fits this Minecraft item?
@@ -875,14 +900,14 @@ Available Categories:
 
 Return ONLY the category name from the list above that best fits this item.
 Just the category name, nothing else.]], 
-        itemName,
+        itemName, 
         itemDisplayName,
         categoriesText)
     
     local itemCategory = llm.getGeminiResponse(prompt)
     if not itemCategory then return nil end
     
-    -- Clean up the response (remove any quotes or whitespace)
+    -- Clean up the response
     itemCategory = itemCategory:gsub('"', ''):gsub("^%s*(.-)%s*$", "%1")
     
     -- Verify the category is valid
@@ -900,21 +925,23 @@ Just the category name, nothing else.]],
         return nil
     end
     
-    -- First, try to find a barrel already assigned to this category that has items
+    -- Cache the category
+    sortingTurtle.itemCategories[itemName] = itemCategory
+    print(string.format("Cached category '%s' for %s", itemCategory, itemDisplayName or itemName))
+    
+    -- Find appropriate barrel
     for barrelNum, category in pairs(sortingTurtle.barrelAssignments) do
         if category == itemCategory and not sortingTurtle.barrels[barrelNum].contents.isEmpty then
             return barrelNum
         end
     end
     
-    -- If no existing barrel with items found, try to find an empty barrel assigned to this category
     for barrelNum, category in pairs(sortingTurtle.barrelAssignments) do
         if category == itemCategory and sortingTurtle.barrels[barrelNum].contents.isEmpty then
             return barrelNum
         end
     end
     
-    -- If no barrel found, return nil
     return nil
 end
 
@@ -965,17 +992,14 @@ function sortingTurtle.handleProblematicItem(itemName, itemDisplayName)
     return false
 end
 
--- Modify sortItems function to handle problematic items
+-- Modify sortItems to be more efficient with scanning
 function sortingTurtle.sortItems()
     -- Clear movement history before starting to sort
     sortingTurtle.moveHistory = {}
     
-    -- Check if we need to rescan barrels
-    local currentTime = os.epoch("local")
-    if sortingTurtle.numBarrels == 0 or 
-       (currentTime - sortingTurtle.lastScanTime) > sortingTurtle.config.SCAN_INTERVAL then
+    -- Only scan if we haven't done initial scan
+    if sortingTurtle.numBarrels == 0 then
         sortingTurtle.scanBarrels()
-        -- If no barrels found, just return
         if sortingTurtle.numBarrels == 0 then 
             return 
         end
@@ -1021,7 +1045,7 @@ function sortingTurtle.sortItems()
             break  -- No more items to sort
         end
         
-            local itemDetail = turtle.getItemDetail()
+        local itemDetail = turtle.getItemDetail()
         if not itemDetail then
             turtle.drop()
         else
@@ -1030,10 +1054,25 @@ function sortingTurtle.sortItems()
             -- Check if this is a known problematic item
             if sortingTurtle.problematicItems[itemDetail.name] then
                 print(string.format("\nDetected previously problematic item: %s", itemDetail.displayName or itemDetail.name))
-                -- Try to handle it by rescanning and updating categories
-                if not sortingTurtle.handleProblematicItem(itemDetail.name, itemDetail.displayName) then
-                    print("Still unable to handle this item type")
-                    turtle.drop()  -- Return it to storage
+                -- Only rescan if we haven't tried this item type recently
+                local problemItem = sortingTurtle.problematicItems[itemDetail.name]
+                local currentTime = os.epoch("local")
+                if not problemItem.lastAttempt or (currentTime - problemItem.lastAttempt) > 300 then  -- 5 minute cooldown
+                    if sortingTurtle.handleProblematicItem(itemDetail.name, itemDetail.displayName) then
+                        -- Clear item from problematic list if handled successfully
+                        sortingTurtle.problematicItems[itemDetail.name] = nil
+                    else
+                        -- Update last attempt time
+                        problemItem.lastAttempt = currentTime
+                        problemItem.attempts = (problemItem.attempts or 0) + 1
+                        turtle.drop()  -- Return it to storage
+                        itemsSkipped = itemsSkipped + 1
+                        sortingTurtle.returnToInitial()
+                        shouldContinue = true
+                    end
+                else
+                    print("Skipping problematic item (cooling down)...")
+                    turtle.drop()
                     itemsSkipped = itemsSkipped + 1
                     sortingTurtle.returnToInitial()
                     shouldContinue = true
@@ -1041,80 +1080,64 @@ function sortingTurtle.sortItems()
             end
             
             if not shouldContinue then
-                local itemCategory = sortingTurtle.getItemCategory(itemDetail.name)
-                print(string.format("\nProcessing: %s (Category: %s)", 
-                    itemDetail.displayName or itemDetail.name,
-                    itemCategory))
-                
+                -- Try to get barrel slot (now with caching)
                 local barrelSlot = sortingTurtle.getBarrelSlot(itemDetail.name, itemDetail.displayName)
                 local success = false
                 
-                if barrelSlot and itemCategory ~= "unknown" then
+                if barrelSlot then
                     print(string.format("Moving to barrel %d...", barrelSlot))
-                    -- Move to barrel and drop item
                     if sortingTurtle.moveToBarrel(barrelSlot) then
+                        -- Try to insert item
                         if turtle.drop() then
                             itemsMoved = true
                             itemsSorted = itemsSorted + 1
-                            -- Update barrel contents in memory
+                            -- Update barrel contents
                             sortingTurtle.barrels[barrelSlot].contents = {
                                 items = {{
-                                name = itemDetail.name,
+                                    name = itemDetail.name,
                                     displayName = itemDetail.displayName
                                 }},
                                 isEmpty = false
                             }
-                            print(string.format("Stored in barrel %d", barrelSlot))
                             success = true
                         end
                     end
                     
                     if not success then
-                        print("Could not reach barrel, returning item to storage")
-                        itemsSkipped = itemsSkipped + 1
+                        -- If we couldn't insert, barrel might be full
+                        print("Could not insert item, barrel might be full")
+                        -- Force a rescan to find alternative storage
+                        sortingTurtle.scanBarrels()
+                        -- Try one more time with fresh barrel data
+                        barrelSlot = sortingTurtle.getBarrelSlot(itemDetail.name, itemDetail.displayName)
+                        if barrelSlot then
+                            if sortingTurtle.moveToBarrel(barrelSlot) and turtle.drop() then
+                                success = true
+                                itemsMoved = true
+                                itemsSorted = itemsSorted + 1
+                            end
+                        end
                     end
-                else
-                    -- Add item to problematic items list
+                end
+                
+                if not success then
+                    -- Add to problematic items only if we haven't seen this type before
                     if not sortingTurtle.problematicItems[itemDetail.name] then
                         sortingTurtle.problematicItems[itemDetail.name] = {
                             name = itemDetail.name,
                             displayName = itemDetail.displayName,
-                            attempts = 1
+                            attempts = 1,
+                            lastAttempt = os.epoch("local")
                         }
-                        -- Try to handle it immediately
-                        if sortingTurtle.handleProblematicItem(itemDetail.name, itemDetail.displayName) then
-                            -- Try sorting again with new categories
-                            barrelSlot = sortingTurtle.getBarrelSlot(itemDetail.name, itemDetail.displayName)
-                            if barrelSlot then
-                                if sortingTurtle.moveToBarrel(barrelSlot) then
-                                    if turtle.drop() then
-                                        itemsMoved = true
-                                        itemsSorted = itemsSorted + 1
-                                        sortingTurtle.barrels[barrelSlot].contents = {
-                                            items = {{
-                                                name = itemDetail.name,
-                                                displayName = itemDetail.displayName
-                                            }},
-                                            isEmpty = false
-                                        }
-                                        print(string.format("Stored in barrel %d", barrelSlot))
-                                        success = true
-                                    end
-                                end
-                            end
-                        end
                     end
-                    
-                    if not success then
-                        print("No suitable barrel found, returning item to storage")
-                        itemsSkipped = itemsSkipped + 1
-                    end
+                    print("No suitable barrel found, returning item to storage")
+                    itemsSkipped = itemsSkipped + 1
                 end
                 
-                -- Return to initial position using movement history
+                -- Return to initial position
                 sortingTurtle.returnToInitial()
                 
-                -- Drop item back in storage if it wasn't stored
+                -- Drop item if not stored
                 if not success then
                     turtle.drop()
                 end
@@ -1312,32 +1335,17 @@ local SCAN_COOLDOWN = 300     -- Minimum time between barrel rescans (5 minutes)
 while true do
     local currentTime = os.epoch("local")
     
-    -- Check if there are items to sort
     if sortingTurtle.hasItemsInStorage() then
         print("\nDetected items in storage!")
-        
-        -- Check if we need to rescan barrels (if it's been more than 5 minutes)
-        if currentTime - sortingTurtle.lastScanTime > SCAN_COOLDOWN then
-            print("Performing periodic barrel scan...")
-            sortingTurtle.scanBarrels()
-            if sortingTurtle.numBarrels == 0 then
-                print("Error: No barrels found during rescan!")
-                print("Please check barrel setup and restart the program.")
-                break
-            end
-        end
-        
-        -- Sort the items
-    sortingTurtle.sortItems()
+        sortingTurtle.sortItems()
         print("\nWaiting for more items...")
         lastCheckTime = currentTime
     else
-        -- If we haven't checked recently, update the idle message
-        if currentTime - lastCheckTime > 30 then  -- Show message every 30 seconds
+        if currentTime - lastCheckTime > 30 then
             print("Waiting for items... (Press Ctrl+T to exit)")
             lastCheckTime = currentTime
         end
-        os.sleep(IDLE_CHECK_INTERVAL)  -- Wait before checking again
+        os.sleep(IDLE_CHECK_INTERVAL)
     end
 end
 
