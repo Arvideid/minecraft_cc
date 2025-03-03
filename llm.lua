@@ -1,7 +1,7 @@
 -- Ensure HTTP is enabled in the ComputerCraft configuration
 
 -- Your Gemini API key
-local apiKey = "AIzaSyBDiyAGMzWDRAVbNVDCB8L10XMy_X8WJGQ"  -- Replace with your actual API key
+local apiKey = "AIzaSyCEb5tYuLn9-8heGtuoRrhoKVaWQq8Uv7U"  -- Replace with your actual API key
 
 -- Define a module table
 local llm = {}
