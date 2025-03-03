@@ -92,44 +92,46 @@ function sortingTurtle.readBarrel()
         isEmpty = true
     }
     
-    -- Save current selected slot
-    local currentSlot = turtle.getSelectedSlot()
+    -- Turn to face the barrel if not already facing it
+    local success, data = turtle.inspect()
+    if not success or not data then
+        return contents
+    end
     
-    -- Try to suck all items into turtle's inventory
-    while turtle.suck() do end
+    -- Try to wrap the barrel as a peripheral
+    local barrel = peripheral.wrap("front")
+    if not barrel then
+        print("Could not access barrel as peripheral")
+        return contents
+    end
     
-    -- Check each slot in turtle's inventory
-    for slot = 1, 16 do
-        local item = turtle.getItemDetail(slot)
-        if item then
-            contents.isEmpty = false
-            -- Add item to contents if not already present
-            local found = false
-            for _, existingItem in ipairs(contents.items) do
-                if existingItem.name == item.name then
-                    found = true
-                    break
-                end
+    -- Get list of items in the barrel
+    local items = barrel.list()
+    if not items then
+        print("Could not read barrel contents")
+        return contents
+    end
+    
+    -- Process each slot in the barrel
+    for slot, item in pairs(items) do
+        contents.isEmpty = false
+        -- Add item to contents if not already present
+        local found = false
+        for _, existingItem in ipairs(contents.items) do
+            if existingItem.name == item.name then
+                found = true
+                break
             end
-            if not found then
-                table.insert(contents.items, {
-                    name = item.name,
-                    displayName = item.displayName or item.name
-                })
-            end
+        end
+        if not found then
+            table.insert(contents.items, {
+                name = item.name,
+                displayName = item.displayName or item.name,
+                count = item.count
+            })
         end
     end
     
-    -- Return all items to the barrel
-    for slot = 1, 16 do
-        if turtle.getItemCount(slot) > 0 then
-            turtle.select(slot)
-            turtle.drop()
-        end
-    end
-    
-    -- Restore selected slot
-    turtle.select(currentSlot)
     return contents
 end
 
