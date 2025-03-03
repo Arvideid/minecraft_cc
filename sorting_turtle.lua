@@ -641,6 +641,66 @@ Return a brief, one-line description of the barrel's purpose.]],
     return llm.getGeminiResponse(prompt)
 end
 
+-- Function to analyze all barrels at once using LLM
+function sortingTurtle.analyzeBulkBarrels()
+    if #sortingTurtle.barrels == 0 then return end
+    
+    -- Create a detailed context of all barrels
+    local barrelContext = "Current barrel setup:\n"
+    for i, barrel in ipairs(sortingTurtle.barrels) do
+        local contents = barrel.contents
+        barrelContext = barrelContext .. string.format("\nBarrel %d: %s (Type: %s, Category: %s)",
+            i,
+            contents.displayName,
+            contents.name,
+            contents.category)
+    end
+    
+    -- Create a comprehensive analysis prompt
+    local prompt = string.format([[
+Analyze this complete Minecraft storage system to determine the optimal organization strategy.
+
+%s
+
+For each barrel, determine:
+1. Main theme/purpose
+2. Types of items that should go here
+3. Related items from same mod that belong
+4. Crafting/gameplay relationships
+
+Consider these organization principles:
+- Keep items from same mod AND function together
+- Group by crafting relationships
+- Maintain logical gameplay groupings
+- Consider tech vs magic mod separation
+- Respect vanilla Minecraft categories
+
+Return a JSON array where each element is:
+{
+  "barrel": <barrel_number>,
+  "purpose": "<one_line_purpose_description>",
+  "suggested_items": ["<item_type1>", "<item_type2>"]
+}]], barrelContext)
+
+    local response = llm.getGeminiResponse(prompt)
+    if response then
+        -- Parse the JSON response and update barrel information
+        local success, analysisData = pcall(textutils.unserializeJSON, response)
+        if success and analysisData then
+            for _, analysis in ipairs(analysisData) do
+                if analysis.barrel and analysis.purpose then
+                    sortingTurtle.barrels[analysis.barrel].analysis = {
+                        purpose = analysis.purpose,
+                        suggested_items = analysis.suggested_items
+                    }
+                end
+            end
+            return true
+        end
+    end
+    return false
+end
+
 -- Optimized scan function that only scans in the direction of barrels
 function sortingTurtle.scanBarrels()
     print("\n=== Starting Barrel Scan ===")
@@ -693,21 +753,13 @@ function sortingTurtle.scanBarrels()
                     blockData = data
                 }
                 
-                -- Get LLM analysis of barrel contents if not empty
-                if contents.name ~= "empty" then
-                    barrelInfo.analysis = sortingTurtle.analyzeBarrelContents(barrelInfo)
-                end
-                
                 table.insert(sortingTurtle.barrels, barrelInfo)
                 sortingTurtle.numBarrels = sortingTurtle.numBarrels + 1
                 
-                -- Print barrel info with analysis if available
+                -- Print basic barrel info
                 print(string.format("\nFound barrel %d:", sortingTurtle.numBarrels))
                 print(string.format("- Contents: %s", contents.displayName or "empty"))
                 print(string.format("- Category: %s", contents.category or "none"))
-                if barrelInfo.analysis then
-                    print(string.format("- Analysis: %s", barrelInfo.analysis))
-                end
             end
         end
         
@@ -729,14 +781,28 @@ function sortingTurtle.scanBarrels()
     -- Return to initial position using movement history
     sortingTurtle.returnToInitial()
     
-    sortingTurtle.lastScanTime = os.epoch("local")
-    
     -- Print barrel summary
     if sortingTurtle.numBarrels > 0 then
         print(string.format("\nFound %d barrels", sortingTurtle.numBarrels))
+        
+        -- Perform bulk analysis of all barrels
+        print("\nAnalyzing barrel organization...")
+        if sortingTurtle.analyzeBulkBarrels() then
+            print("Barrel analysis complete!")
+            -- Print analysis summary
+            for i, barrel in ipairs(sortingTurtle.barrels) do
+                if barrel.analysis then
+                    print(string.format("\nBarrel %d Purpose: %s", i, barrel.analysis.purpose))
+                end
+            end
+        else
+            print("Warning: Could not complete barrel analysis")
+        end
     else
         print("\nNo barrels found! Please set up barrels and restart.")
     end
+    
+    sortingTurtle.lastScanTime = os.epoch("local")
 end
 
 -- Function to determine which barrel slot to use based on item name using LLM
@@ -754,9 +820,13 @@ function sortingTurtle.getBarrelSlot(itemName, itemCategory)
                           contents.displayName,
                           contents.name,
                           contents.category)
-        -- Add barrel analysis if available
+        
+        -- Add barrel analysis information
         if barrel.analysis then
-            status = status .. string.format("\nPurpose: %s", barrel.analysis)
+            status = status .. string.format("\nPurpose: %s", barrel.analysis.purpose)
+            if barrel.analysis.suggested_items then
+                status = status .. "\nSuggested items: " .. table.concat(barrel.analysis.suggested_items, ", ")
+            end
         end
         barrelContext = barrelContext .. string.format("\nBarrel %d: %s", i, status)
     end
@@ -780,19 +850,13 @@ Item Details:
 
 Selection Rules (in priority order):
 1. EXACT MATCH: If a barrel already contains this exact item, use that barrel
-2. MOD & FUNCTION MATCH: If a barrel contains items from the same mod AND similar function (e.g., same machine type, same resource type)
-3. MOD MATCH: If a barrel contains items from the same mod
-4. FUNCTIONAL MATCH: Group items commonly used together in crafting/gameplay (e.g., all machine parts, all power generation items)
-5. VANILLA GROUPING: For vanilla items, group by logical minecraft categories (e.g., building blocks, redstone, etc.)
+2. BARREL PURPOSE MATCH: If a barrel's analyzed purpose matches this item's function
+3. MOD & FUNCTION MATCH: If a barrel contains items from the same mod AND similar function
+4. MOD MATCH: If a barrel contains items from the same mod
+5. SUGGESTED ITEMS MATCH: If the item matches any barrel's suggested items list
 6. EMPTY BARREL: If no good matches exist, use the first empty barrel
 
-Additional Guidelines:
-- Keep items from the same mod AND same function together (e.g., all Create gears, all Thermal machines)
-- For vanilla items, respect Minecraft's own categorization (e.g., podzol goes with dirt/grass)
-- Consider crafting recipes and gameplay mechanics when grouping
-- Maintain logical groupings (e.g., power-related items together, processing machines together)
-- If multiple matches exist, prefer the barrel with most similar items
-
+Consider the existing barrel analysis and organization strategy when making your decision.
 Return ONLY a single number between 1 and %d. No explanation needed.
 
 Selected Barrel Number:]], 
