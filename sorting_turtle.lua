@@ -962,6 +962,10 @@ end
 function sortingTurtle.handleProblematicItem(itemName, itemDisplayName)
     print(string.format("\nAttempting to handle problematic item: %s", itemDisplayName or itemName))
     
+    -- First, return to initial position and put the item back in storage
+    sortingTurtle.returnToInitial()
+    turtle.drop()  -- Put the problematic item back in input storage
+    
     -- Rescan barrels to find empty ones and update categories
     print("Rescanning barrels to find empty ones...")
     sortingTurtle.scanBarrels()
@@ -982,9 +986,32 @@ function sortingTurtle.handleProblematicItem(itemName, itemDisplayName)
         if sortingTurtle.defineCategories() then
             print("Categories updated!")
             if sortingTurtle.assignBarrelCategories() then
-                -- Remove the item from problematic items if it was there
-                sortingTurtle.problematicItems[itemName] = nil
-                return true
+                -- Get the item back from storage to try sorting it again
+                if turtle.suck() then
+                    local item = turtle.getItemDetail()
+                    if item and item.name == itemName then
+                        -- Try to find a barrel slot with the new categories
+                        local barrelSlot = sortingTurtle.getBarrelSlot(itemName, itemDisplayName)
+                        if barrelSlot then
+                            if sortingTurtle.moveToBarrel(barrelSlot) then
+                                if turtle.drop() then
+                                    -- Successfully stored with new categories
+                                    sortingTurtle.problematicItems[itemName] = nil
+                                    return true
+                                end
+                            end
+                            -- If we get here, we couldn't store it
+                            sortingTurtle.returnToInitial()
+                            turtle.drop()  -- Put it back in input storage
+                        else
+                            -- No suitable barrel found, return item
+                            turtle.drop()
+                        end
+                    else
+                        -- Wrong item retrieved, put it back
+                        turtle.drop()
+                    end
+                end
             end
         end
     end
