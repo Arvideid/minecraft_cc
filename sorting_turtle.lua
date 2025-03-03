@@ -88,26 +88,35 @@ end
 -- Function to read barrel contents
 function sortingTurtle.readBarrel()
     local contents = {
-        name = "empty",
-        displayName = "empty",
-        category = "none"
+        items = {},
+        primaryCategory = "none"
     }
     
     -- Save current selected slot
     local currentSlot = turtle.getSelectedSlot()
     
-    -- Try to suck one item to get its details
-    if turtle.suck(1) then
-        local item = turtle.getItemDetail()
-        if item then
-            contents = {
-                name = item.name or "unknown",
-                displayName = item.displayName or item.name or "unknown",
-                category = sortingTurtle.getItemCategory(item.name or "unknown")
-            }
+    -- Try to suck all items to get full contents
+    while true do
+        if turtle.suck() then
+            local item = turtle.getItemDetail()
+            if item then
+                table.insert(contents.items, {
+                    name = item.name,
+                    displayName = item.displayName,
+                    category = sortingTurtle.getItemCategory(item.name),
+                    count = item.count
+                })
+            end
             -- Put the item back
-            turtle.drop(1)
+            turtle.drop()
+        else
+            break
         end
+    end
+    
+    -- Determine primary category if items exist
+    if #contents.items > 0 then
+        contents.primaryCategory = contents.items[1].category
     end
     
     -- Restore selected slot
@@ -641,6 +650,127 @@ Return a brief, one-line description of the barrel's purpose.]],
     return llm.getGeminiResponse(prompt)
 end
 
+-- Function to analyze if items should be reorganized
+function sortingTurtle.analyzeReorganization(barrels)
+    if #barrels == 0 then return nil end
+    
+    -- Create context of all barrels for LLM
+    local barrelContext = "Current barrel organization:\n"
+    for i, barrel in ipairs(barrels) do
+        local contents = barrel.contents
+        barrelContext = barrelContext .. string.format("\nBarrel %d: %s (Category: %s)", 
+            i, 
+            contents.displayName or "empty",
+            contents.category or "none")
+    end
+    
+    local prompt = string.format([[
+Analyze the current barrel organization and suggest if any items should be moved to optimize storage.
+
+%s
+
+Consider:
+1. Are there items that would be better grouped together?
+2. Are there barrels mixing different mods or functions that should be separated?
+3. Could the organization be improved for crafting efficiency?
+4. Are similar items spread across multiple barrels?
+
+Return a JSON array of moves that should be made, or empty array if no changes needed. Format:
+[
+  {"from": barrel_number, "to": barrel_number, "reason": "brief explanation"},
+  ...
+]
+
+Response:]], barrelContext)
+
+    local response = llm.getGeminiResponse(prompt)
+    if response then
+        -- Try to parse the JSON response
+        local success, moves = pcall(textutils.unserializeJSON, response)
+        if success and type(moves) == "table" then
+            return moves
+        end
+    end
+    return {}
+end
+
+-- Function to collect items from a barrel
+function sortingTurtle.collectFromBarrel()
+    -- Try to collect all items from current barrel
+    local collected = {}
+    while true do
+        if turtle.suck() then
+            local item = turtle.getItemDetail()
+            if item then
+                table.insert(collected, item)
+            end
+        else
+            break
+        end
+    end
+    return collected
+end
+
+-- Function to reorganize barrels
+function sortingTurtle.reorganizeBarrels()
+    print("\n=== Analyzing Barrel Organization ===")
+    
+    -- Get reorganization suggestions
+    local moves = sortingTurtle.analyzeReorganization(sortingTurtle.barrels)
+    if #moves == 0 then
+        print("Current organization is optimal!")
+        return
+    end
+    
+    print(string.format("\nExecuting %d optimization moves:", #moves))
+    
+    -- Execute moves automatically
+    for i, move in ipairs(moves) do
+        print(string.format("\nMove %d/%d: %s", i, #moves, move.reason))
+        
+        -- Move to source barrel
+        if sortingTurtle.moveToBarrel(move.from) then
+            -- Collect items
+            local collected = sortingTurtle.collectFromBarrel()
+            if #collected > 0 then
+                -- Return to initial position
+                sortingTurtle.returnToInitial()
+                
+                -- Move to destination barrel
+                if sortingTurtle.moveToBarrel(move.to) then
+                    -- Drop all collected items
+                    for _, item in ipairs(collected) do
+                        turtle.drop()
+                    end
+                    
+                    -- Update barrel contents in memory
+                    sortingTurtle.barrels[move.to].contents = sortingTurtle.readBarrel()
+                    -- Clear source barrel contents
+                    sortingTurtle.barrels[move.from].contents = {
+                        items = {},
+                        primaryCategory = "none"
+                    }
+                    
+                    print("Move completed successfully!")
+                else
+                    print("Could not reach destination barrel!")
+                    -- Return items to source
+                    sortingTurtle.returnToInitial()
+                    sortingTurtle.moveToBarrel(move.from)
+                    for _, item in ipairs(collected) do
+                        turtle.drop()
+                    end
+                end
+            end
+        end
+        
+        -- Return to initial position
+        sortingTurtle.returnToInitial()
+    end
+    
+    print("\nReorganization complete!")
+end
+
 -- Optimized scan function that only scans in the direction of barrels
 function sortingTurtle.scanBarrels()
     print("\n=== Starting Barrel Scan ===")
@@ -657,7 +787,7 @@ function sortingTurtle.scanBarrels()
         return
     end
     
-    -- Turn left to face the path (no need to back away)
+    -- Turn left to face the path
     while sortingTurtle.position.facing ~= 3 do  -- 3 is west (left)
         turtle.turnLeft()
         sortingTurtle.addToHistory("turnLeft")
@@ -685,7 +815,7 @@ function sortingTurtle.scanBarrels()
         local success, data = turtle.inspect()
         if success and data then
             if string.find(data.name or "", "barrel") or string.find(data.name or "", "storage") then
-                -- Read barrel contents immediately
+                -- Read all contents of the barrel
                 local contents = sortingTurtle.readBarrel()
                 local barrelInfo = {
                     position = steps,
@@ -694,19 +824,25 @@ function sortingTurtle.scanBarrels()
                 }
                 
                 -- Get LLM analysis of barrel contents if not empty
-                if contents.name ~= "empty" then
+                if #contents.items > 0 then
                     barrelInfo.analysis = sortingTurtle.analyzeBarrelContents(barrelInfo)
                 end
                 
                 table.insert(sortingTurtle.barrels, barrelInfo)
                 sortingTurtle.numBarrels = sortingTurtle.numBarrels + 1
                 
-                -- Print barrel info with analysis if available
+                -- Print barrel info
                 print(string.format("\nFound barrel %d:", sortingTurtle.numBarrels))
-                print(string.format("- Contents: %s", contents.displayName or "empty"))
-                print(string.format("- Category: %s", contents.category or "none"))
-                if barrelInfo.analysis then
-                    print(string.format("- Analysis: %s", barrelInfo.analysis))
+                if #contents.items > 0 then
+                    print("Contents:")
+                    for _, item in ipairs(contents.items) do
+                        print(string.format("- %s x%d (%s)", 
+                            item.displayName or item.name,
+                            item.count,
+                            item.category))
+                    end
+                else
+                    print("- Empty")
                 end
             end
         end
@@ -731,11 +867,12 @@ function sortingTurtle.scanBarrels()
     
     sortingTurtle.lastScanTime = os.epoch("local")
     
-    -- Print barrel summary
+    -- Print barrel summary and automatically reorganize if needed
     if sortingTurtle.numBarrels > 0 then
         print(string.format("\nFound %d barrels", sortingTurtle.numBarrels))
+        sortingTurtle.reorganizeBarrels()
     else
-        print("\nNo barrels found! Please set up barrels and restart.")
+        print("\nNo barrels found!")
     end
 end
 
@@ -960,16 +1097,12 @@ function sortingTurtle.sortItems()
 end
 
 -- Main loop
-print("=== Smart Sorting Turtle v2.7 ===")
+print("=== Smart Sorting Turtle v2.8 ===")
 print("Setup Instructions:")
 print("1. Place input storage (chest or barrel)")
 print("2. Place sorting barrels in a line to the left of the input storage")
 print("3. Place turtle directly behind the input storage, facing it")
-print("4. Ensure all barrels are accessible")
-print("\nLayout should look like this:")
-print("[S][B][B][B]...")
-print("[T]")
-print("Where: T=Turtle (facing up), S=Input Storage, B=Sorting Barrels")
+print("\nStarting automatic operation...")
 
 -- Do initial barrel scan
 sortingTurtle.scanBarrels()
@@ -979,11 +1112,34 @@ if sortingTurtle.numBarrels == 0 then
     return sortingTurtle
 end
 
-print("\nReady to sort items!")
+print("\nMonitoring input storage...")
 
 while true do
-    sortingTurtle.sortItems()
-    os.sleep(5)
+    -- Check if there are items in the input storage
+    if sortingTurtle.isValidInputStorage() then
+        local hasItems = false
+        for slot = 1, 16 do
+            if turtle.suck() then
+                hasItems = true
+                turtle.drop() -- Put it back
+                break
+            end
+        end
+        
+        if hasItems then
+            -- Only scan if it's been a while since last scan
+            local currentTime = os.epoch("local")
+            if (currentTime - sortingTurtle.lastScanTime) > sortingTurtle.config.SCAN_INTERVAL then
+                sortingTurtle.scanBarrels()
+            end
+            
+            -- Sort the items
+            sortingTurtle.sortItems()
+        end
+    end
+    
+    -- Wait a short time before checking again
+    os.sleep(2)
 end
 
 return sortingTurtle
