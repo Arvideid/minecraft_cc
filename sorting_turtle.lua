@@ -25,6 +25,13 @@ sortingTurtle.lastScanTime = 0
 sortingTurtle.position = { x = 0, y = 0, z = 0, facing = 0 }  -- 0=north, 1=east, 2=south, 3=west
 sortingTurtle.moveHistory = {}  -- Track movement history
 
+-- Add persistent barrel memory
+sortingTurtle.barrelMemory = {
+    categories = {},  -- Store learned categories
+    lastSave = 0,    -- Track when we last saved
+    SAVE_INTERVAL = 300  -- Save every 5 minutes if changes occurred
+}
+
 -- Function to add movement to history
 function sortingTurtle.addToHistory(movement)
     table.insert(sortingTurtle.moveHistory, movement)
@@ -827,26 +834,114 @@ function sortingTurtle.scanBarrels()
     sortingTurtle.lastScanTime = os.epoch("local")
 end
 
--- Function to determine which barrel slot to use based on item name using LLM
-function sortingTurtle.getBarrelSlot(itemName)
+-- Function to save barrel memory to file
+function sortingTurtle.saveBarrelMemory()
+    local file = fs.open("barrel_memory.json", "w")
+    if file then
+        file.write(textutils.serializeJSON(sortingTurtle.barrelMemory))
+        file.close()
+        sortingTurtle.barrelMemory.lastSave = os.epoch("local")
+        return true
+    end
+    return false
+end
+
+-- Function to load barrel memory from file
+function sortingTurtle.loadBarrelMemory()
+    local file = fs.open("barrel_memory.json", "r")
+    if file then
+        local data = file.readAll()
+        file.close()
+        local success, memory = pcall(textutils.unserializeJSON, data)
+        if success and memory then
+            sortingTurtle.barrelMemory = memory
+            return true
+        end
+    end
+    return false
+end
+
+-- Function to update barrel memory with new item relationships
+function sortingTurtle.updateBarrelMemory(barrelNumber, itemName, itemDisplayName)
+    local category = sortingTurtle.barrelMemory.categories[barrelNumber]
+    if not category then
+        category = {
+            items = {},
+            purpose = "",
+            last_updated = 0
+        }
+        sortingTurtle.barrelMemory.categories[barrelNumber] = category
+    end
+    
+    -- Add new item to category if not exists
+    local found = false
+    for _, item in ipairs(category.items) do
+        if item.name == itemName then
+            found = true
+            break
+        end
+    end
+    
+    if not found then
+        table.insert(category.items, {
+            name = itemName,
+            displayName = itemDisplayName,
+            added = os.epoch("local")
+        })
+        category.last_updated = os.epoch("local")
+        
+        -- Request new analysis if category has changed
+        local prompt = string.format([[
+Analyze this updated barrel category and provide a refined purpose description.
+Current items in this barrel:
+%s
+New item added: %s
+
+Return a brief, one-line description of this barrel's refined purpose.]], 
+            textutils.serialize(category.items),
+            itemDisplayName)
+        
+        local newPurpose = llm.getGeminiResponse(prompt)
+        if newPurpose then
+            category.purpose = newPurpose
+        end
+        
+        -- Save changes periodically
+        if os.epoch("local") - sortingTurtle.barrelMemory.lastSave > sortingTurtle.barrelMemory.SAVE_INTERVAL then
+            sortingTurtle.saveBarrelMemory()
+        end
+    end
+end
+
+-- Enhanced getBarrelSlot function that uses memory
+function sortingTurtle.getBarrelSlot(itemName, itemDisplayName)
     if sortingTurtle.numBarrels == 0 then
         return nil
     end
 
-    -- Create a detailed context for the LLM with better formatting
-    local barrelContext = "Current barrel setup:\n"
+    -- Create context including both current state and learned categories
+    local barrelContext = "Current barrel setup and learned categories:\n"
     for i, barrel in ipairs(sortingTurtle.barrels) do
         barrelContext = barrelContext .. string.format("\nBarrel %d:", i)
-        if barrel.contents.isEmpty then
-            barrelContext = barrelContext .. " EMPTY"
-        else
-            barrelContext = barrelContext .. "\nContains:"
+        
+        -- Add current contents
+        if not barrel.contents.isEmpty then
+            barrelContext = barrelContext .. "\nCurrent Contents:"
             for _, item in ipairs(barrel.contents.items) do
                 barrelContext = barrelContext .. string.format("\n- %s", item.displayName)
             end
+        else
+            barrelContext = barrelContext .. " EMPTY"
         end
-        if barrel.analysis then
-            barrelContext = barrelContext .. string.format("\nPurpose: %s", barrel.analysis.purpose)
+        
+        -- Add learned category information
+        local category = sortingTurtle.barrelMemory.categories[i]
+        if category then
+            barrelContext = barrelContext .. "\nLearned Purpose: " .. category.purpose
+            barrelContext = barrelContext .. "\nKnown Items:"
+            for _, item in ipairs(category.items) do
+                barrelContext = barrelContext .. string.format("\n- %s", item.displayName)
+            end
         end
     end
     
@@ -855,40 +950,31 @@ function sortingTurtle.getBarrelSlot(itemName)
     
     -- Construct a structured prompt
     local prompt = string.format([[
-You are a Minecraft item sorter. Your task is to determine the best barrel for storing an item.
-Focus on logical relationships between items, not just their names or mods.
+You are a Minecraft item sorter with memory of past decisions. Your task is to determine the best barrel for storing an item.
+Focus on both current contents and learned category patterns.
 
 Item to Store: %s
+Display Name: %s
 Base Name: %s
 
-Current Storage System:
+Storage System State:
 %s
 
-Selection Guidelines:
-1. Look for barrels containing items that are:
-   - Used together in crafting
-   - Used together in building
-   - Part of the same game mechanic
-   - Similar in material or texture
-   - Related by function or purpose
-2. Consider gameplay relationships:
-   - Building blocks that players use together
-   - Items that are part of the same crafting chain
-   - Items used for similar purposes
-3. If no good match exists, prefer empty barrels
-
-Examples of good matches:
-- Stone variants (stone, andesite, granite, diorite) belong together
-- All wood types and their products belong together
-- Related crafting materials belong together
-- Tools with similar functions belong together
+Decision Guidelines:
+1. Consider both current contents AND learned categories
+2. Look for barrels where this item fits the established pattern
+3. For empty barrels, consider if this item could start a new logical category
+4. Maintain consistent categorization based on:
+   - Crafting relationships
+   - Building/gameplay usage patterns
+   - Material similarities
+   - Functional groups
 
 Response Format:
-You MUST return ONLY a single number between 1 and %d.
-No explanation, no JSON, no other text.
-Just the barrel number.
+Return ONLY a single number between 1 and %d representing the best barrel choice.
 ]], 
         itemName,
+        itemDisplayName,
         baseName or itemName,
         barrelContext,
         sortingTurtle.numBarrels)
@@ -896,17 +982,13 @@ Just the barrel number.
     local response = llm.getGeminiResponse(prompt)
     
     if response then
-        -- Clean up response to ensure we only get a number
         response = response:match("^%s*(%d+)%s*$")
         local barrelSlot = tonumber(response)
         if barrelSlot and barrelSlot >= 1 and barrelSlot <= sortingTurtle.numBarrels then
+            -- Update memory with this decision
+            sortingTurtle.updateBarrelMemory(barrelSlot, itemName, itemDisplayName)
             return barrelSlot
-        else
-            print("Invalid barrel number from LLM. Response was:")
-            print(response)
         end
-    else
-        print("No response received from LLM.")
     end
     return nil
 end
@@ -984,7 +1066,7 @@ function sortingTurtle.sortItems()
                     itemDetail.displayName or itemDetail.name,
                     itemCategory))
                 
-                local barrelSlot = sortingTurtle.getBarrelSlot(itemDetail.name)
+                local barrelSlot = sortingTurtle.getBarrelSlot(itemDetail.name, itemDetail.displayName)
                 
                 if barrelSlot and itemCategory ~= "unknown" then
                     print(string.format("Moving to barrel %d...", barrelSlot))
@@ -1078,7 +1160,11 @@ function sortingTurtle.hasItemsInStorage()
 end
 
 -- Main loop
-print("=== Smart Sorting Turtle v2.8 ===")
+print("=== Smart Sorting Turtle v2.9 ===")
+print("Loading barrel memory...")
+if not sortingTurtle.loadBarrelMemory() then
+    print("No previous barrel memory found, starting fresh.")
+end
 print("Setup Instructions:")
 print("1. Place input storage (chest or barrel)")
 print("2. Place sorting barrels in a line to the left of the input storage")
