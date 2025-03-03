@@ -29,9 +29,6 @@ sortingTurtle.moveHistory = {}  -- Track movement history
 sortingTurtle.categories = {}  -- Will store category definitions
 sortingTurtle.barrelAssignments = {}  -- Will store barrel -> category mappings
 
--- Add after sortingTurtle initialization
-sortingTurtle.problematicItems = {}  -- Track items that couldn't be sorted
-
 -- Add barrel layout configuration
 sortingTurtle.layout = {
     maxHorizontalSteps = 16,  -- Maximum horizontal steps to search
@@ -236,31 +233,6 @@ function sortingTurtle.checkFuel()
     return true
 end
 
--- Function to detect surroundings
-function sortingTurtle.detectSurroundings()
-    local surroundings = {
-        front = { exists = turtle.detect(), block = nil },
-        up = { exists = turtle.detectUp(), block = nil },
-        down = { exists = turtle.detectDown(), block = nil }
-    }
-    
-    -- Get block information
-    if surroundings.front.exists then
-        local success, data = turtle.inspect()
-        if success then surroundings.front.block = data end
-    end
-    if surroundings.up.exists then
-        local success, data = turtle.inspectUp()
-        if success then surroundings.up.block = data end
-    end
-    if surroundings.down.exists then
-        local success, data = turtle.inspectDown()
-        if success then surroundings.down.block = data end
-    end
-    
-    return surroundings
-end
-
 -- Function to update position after movement
 function sortingTurtle.updatePosition(movement)
     if movement == "forward" then
@@ -426,153 +398,6 @@ function sortingTurtle.getTotalItems()
     return total
 end
 
--- Function to perform a 360-degree scan
-function sortingTurtle.scan360()
-    local scan = {
-        north = {},
-        east = {},
-        south = {},
-        west = {},
-        up = turtle.detectUp(),
-        down = turtle.detectDown(),
-        upBlock = nil,
-        downBlock = nil
-    }
-    
-    -- Get up/down block data
-    if scan.up then
-        local success, data = turtle.inspectUp()
-        if success then scan.upBlock = data end
-    end
-    if scan.down then
-        local success, data = turtle.inspectDown()
-        if success then scan.downBlock = data end
-    end
-    
-    -- Store original facing direction
-    local originalFacing = sortingTurtle.position.facing
-    
-    -- Scan in all four directions
-    for i = 0, 3 do
-        local direction = ({"north", "east", "south", "west"})[i + 1]
-        local success, data = turtle.inspect()
-        scan[direction] = {
-            exists = success,
-            block = data
-        }
-        sortingTurtle.safeMove("turnRight")
-    end
-    
-    -- Return to original facing direction
-    while sortingTurtle.position.facing ~= originalFacing do
-        sortingTurtle.safeMove("turnRight")
-    end
-    
-    sortingTurtle.lastScan = scan
-    return scan
-end
-
--- Function to analyze surroundings and find interesting blocks
-function sortingTurtle.analyzeSurroundings()
-    local scan = sortingTurtle.scan360()
-    local findings = {
-        barrels = {},
-        chests = {},
-        obstacles = {},
-        interesting = {}
-    }
-    
-    -- Helper function to categorize a block
-    local function categorizeBlock(block, direction, distance)
-        if not block then return end  -- Early return if block is nil
-        
-        -- Create info table with safe access to block properties
-        local info = {
-            name = block.name or "unknown",
-            direction = direction or "unknown",
-            distance = distance or 1
-        }
-        
-        -- Skip processing if we don't have a valid name
-        if not info.name or info.name == "unknown" then
-            return
-        end
-        
-        -- Check for storage blocks
-        if string.find(info.name, "barrel") or string.find(info.name, "storage") then
-            table.insert(findings.barrels, info)
-        elseif string.find(info.name, "chest") then
-            table.insert(findings.chests, info)
-        elseif info.name ~= "minecraft:air" then
-            table.insert(findings.obstacles, info)
-        end
-        
-        -- Check for special blocks
-        if string.find(info.name, "diamond") or string.find(info.name, "chest") or
-           string.find(info.name, "furnace") or string.find(info.name, "crafting") then
-            table.insert(findings.interesting, info)
-        end
-    end
-    
-    -- Analyze each direction with nil checks
-    for direction, data in pairs(scan) do
-        if direction ~= "up" and direction ~= "down" then
-            if type(data) == "table" and data.block then  -- Add type check
-                categorizeBlock(data.block, direction)
-            end
-        end
-    end
-    
-    -- Analyze up/down with nil checks
-    if scan.upBlock then 
-        categorizeBlock(scan.upBlock, "up") 
-    end
-    if scan.downBlock then 
-        categorizeBlock(scan.downBlock, "down") 
-    end
-    
-    return findings
-end
-
--- Function to map current position
-function sortingTurtle.mapPosition()
-    local surroundings = sortingTurtle.analyzeSurroundings()
-    local pos = sortingTurtle.position
-    local key = string.format("%d,%d,%d", pos.x, pos.y, pos.z)
-    
-    sortingTurtle.environment.blocks[key] = {
-        position = {x = pos.x, y = pos.y, z = pos.z},
-        surroundings = surroundings,
-        timestamp = os.epoch("local")
-    }
-    
-    return surroundings
-end
-
--- Add a new function for step-by-step movement with 360 scanning
-function sortingTurtle.moveWithScan(movement)
-    -- Only scan if we're moving forward, not for turns
-    local needsScan = (movement == "forward")
-    
-    -- Perform the movement first
-    local success = sortingTurtle.safeMove(movement)
-    
-    if success and needsScan then
-        -- Do a single scan after moving forward
-        local scan = sortingTurtle.mapPosition()
-        
-        -- Report only if we found something
-        if #scan.barrels > 0 or #scan.obstacles > 0 or #scan.interesting > 0 then
-            print("Environment scan results:")
-            if #scan.barrels > 0 then print("  - Found " .. #scan.barrels .. " barrels") end
-            if #scan.obstacles > 0 then print("  - Found " .. #scan.obstacles .. " obstacles") end
-            if #scan.interesting > 0 then print("  - Found " .. #scan.interesting .. " interesting blocks") end
-        end
-    end
-    
-    return success
-end
-
 -- Function to move to a specific barrel position
 function sortingTurtle.moveToBarrel(barrelNumber)
     local barrel = sortingTurtle.barrels[barrelNumber]
@@ -689,113 +514,378 @@ function sortingTurtle.returnToChest()
     end
 end
 
--- Function to get LLM analysis of barrel contents
-function sortingTurtle.analyzeBarrelContents(barrel)
-    if not barrel or not barrel.contents then return nil end
-    
-    local prompt = string.format([[
-Analyze this Minecraft barrel's contents to determine its purpose and suggest what other items would fit well in it.
-
-Current Contents:
-Name: %s
-Display Name: %s
-Category: %s
-
-Consider:
-1. What is the main theme/purpose of this barrel?
-2. What types of items would logically belong here?
-3. Are there related items from the same mod that should go here?
-4. What crafting or gameplay relationships exist with these items?
-
-Return a brief, one-line description of the barrel's purpose.]], 
-        barrel.contents.name,
-        barrel.contents.displayName,
-        barrel.contents.category)
-    
-    return llm.getGeminiResponse(prompt)
-end
-
--- Function to analyze all barrels at once using LLM
-function sortingTurtle.analyzeBulkBarrels()
-    if #sortingTurtle.barrels == 0 then return end
-    
-    -- Create a detailed context of all barrels and their contents
-    local barrelContext = "Current barrel setup:\n"
-    for i, barrel in ipairs(sortingTurtle.barrels) do
-        barrelContext = barrelContext .. string.format("\nBarrel %d:", i)
-        if barrel.contents.isEmpty then
-            barrelContext = barrelContext .. " EMPTY"
-        else
-            barrelContext = barrelContext .. "\nContains:"
-            for _, item in ipairs(barrel.contents.items) do
-                barrelContext = barrelContext .. string.format("\n- %s", item.displayName)
-            end
-        end
+-- Function to check if the turtle is facing a valid input storage
+function sortingTurtle.checkInputStorage()
+    -- Ensure the turtle is facing north
+    while sortingTurtle.position.facing ~= 0 do
+        turtle.turnLeft()
+        sortingTurtle.updatePosition("turnLeft")
     end
     
-    -- Create a structured analysis prompt
-    local prompt = string.format([[
-You are a Minecraft storage system analyzer. Your task is to analyze this storage system and output a STRICT JSON response.
-Focus on organizing items by their logical relationships, crafting connections, and gameplay usage.
-
-Current Storage System:
-%s
-
-Analysis Guidelines:
-1. Group items based on their natural relationships and common usage
-2. Consider crafting recipes and how items are used together in-game
-3. Look for patterns in existing barrel contents
-4. Think about what players would logically look for together
-
-Example Relationships (but don't limit yourself to these):
-- Building materials that are commonly used together
-- Items that are part of the same crafting chain
-- Items used for similar purposes in-game
-- Blocks with similar textures or materials
-- Items from the same game mechanic or feature
-
-Response Format:
-You MUST return a valid JSON array in this EXACT format:
-[
-  {
-    "barrel": 1,
-    "purpose": "Brief purpose description",
-    "suggested_items": ["item type 1", "item type 2"]
-  }
-]
-
-Requirements:
-- "barrel" must be a number from 1 to %d
-- "purpose" must be a single line describing the barrel's contents and theme
-- "suggested_items" must list similar items that would fit well
-- Response must be valid JSON
-- Include ALL barrels
-- No explanation text, ONLY the JSON array
-]], barrelContext, sortingTurtle.numBarrels)
-
-    local response = llm.getGeminiResponse(prompt)
-    if response then
-        -- Parse the JSON response and update barrel information
-        local success, analysisData = pcall(textutils.unserializeJSON, response)
-        if success and analysisData then
-            for _, analysis in ipairs(analysisData) do
-                if analysis.barrel and analysis.purpose then
-                    sortingTurtle.barrels[analysis.barrel].analysis = {
-                        purpose = analysis.purpose,
-                        suggested_items = analysis.suggested_items
-                    }
-                end
-            end
+    -- Check if there's a valid storage block in front
+    local success, data = turtle.inspect()
+    if success and data then
+        if data.name == "minecraft:chest" or data.name == "minecraft:barrel" then
             return true
-        else
-            print("Failed to parse LLM response. Response was:")
-            print(response)
         end
     end
     return false
 end
 
--- Function to define categories (called only once during initial scan)
+-- Function to scan for barrels
+function sortingTurtle.scanBarrels()
+    print("Scanning for barrels...")
+    
+    -- Initialize barrel count
+    sortingTurtle.numBarrels = 0
+    sortingTurtle.barrels = {}
+    
+    -- Turn left to face the barrels
+    while sortingTurtle.position.facing ~= 3 do  -- 3 is west (left)
+        sortingTurtle.safeMove("turnLeft")
+    end
+    
+    -- Move forward one step to be in line with barrels
+    sortingTurtle.safeMove("forward")
+    
+    -- Scan each level
+    for level = 0, sortingTurtle.layout.maxVerticalSteps - 1 do
+        -- Scan each horizontal step
+        for step = 0, sortingTurtle.layout.maxHorizontalSteps - 1 do
+            -- Check if we've reached the end of the row
+            if not sortingTurtle.safeMove("forward") then
+                break
+            end
+            
+            -- Check if there's a barrel in front
+            if sortingTurtle.isBarrel() then
+                sortingTurtle.numBarrels = sortingTurtle.numBarrels + 1
+                sortingTurtle.barrels[sortingTurtle.numBarrels] = {
+                    position = step,
+                    level = level,
+                    contents = sortingTurtle.readBarrel()
+                }
+            end
+        end
+        
+        -- Move back to the start of the row
+        for _ = 0, sortingTurtle.layout.maxHorizontalSteps - 1 do
+            sortingTurtle.safeMove("back")
+        end
+        
+        -- Move up to the next level
+        if level < sortingTurtle.layout.maxVerticalSteps - 1 then
+            sortingTurtle.safeMove("up")
+        end
+    end
+    
+    -- Return to the starting position
+    sortingTurtle.returnHome()
+    
+    -- Update last scan time
+    sortingTurtle.lastScanTime = os.epoch("local")
+    
+    print(string.format("Found %d barrels", sortingTurtle.numBarrels))
+end
+
+-- Function to sort items
+function sortingTurtle.sortItems()
+    local totalItems = sortingTurtle.getTotalItems()
+    local sortedItems = 0
+    local errorCount = 0
+    local maxErrors = 3
+    
+    -- Process items until inventory is empty or max errors reached
+    while sortingTurtle.getTotalItems() > 0 and errorCount < maxErrors do
+        -- Save current selected slot
+        local currentSlot = turtle.getSelectedSlot()
+        if not currentSlot then
+            print("Error: Could not get current slot!")
+            errorCount = errorCount + 1
+            break
+        end
+        
+        -- Suck one item from the input storage
+        if not turtle.suck() then
+            print("Error: Could not suck item from input storage!")
+            errorCount = errorCount + 1
+            break
+        end
+        
+        -- Get item details
+        local itemDetail = turtle.getItemDetail()
+        if not itemDetail or not itemDetail.name then
+            print("Error: Invalid item details!")
+            errorCount = errorCount + 1
+            break
+        end
+        
+        -- Categorize the item
+        local category = sortingTurtle.getItemCategory(itemDetail.name)
+        if not category then
+            print("Error: Could not categorize item!")
+            errorCount = errorCount + 1
+            break
+        end
+        
+        -- Find a barrel for this category
+        local targetBarrel = nil
+        for _, barrel in ipairs(sortingTurtle.barrels) do
+            if barrel.contents.isEmpty or (barrel.contents.category == category) then
+                targetBarrel = barrel
+                break
+            end
+        end
+        
+        -- If no suitable barrel found, try to find an empty one
+        if not targetBarrel then
+            for _, barrel in ipairs(sortingTurtle.barrels) do
+                if barrel.contents.isEmpty then
+                    targetBarrel = barrel
+                    break
+                end
+            end
+        end
+        
+        -- If still no barrel found, try to resort and find an empty one
+        if not targetBarrel then
+            print("No suitable barrel found, resorting items...")
+            sortingTurtle.resort()
+            
+            for _, barrel in ipairs(sortingTurtle.barrels) do
+                if barrel.contents.isEmpty then
+                    targetBarrel = barrel
+                    break
+                end
+            end
+        end
+        
+        -- If still no barrel found, give up
+        if not targetBarrel then
+            print("Error: Could not find a suitable barrel!")
+            errorCount = errorCount + 1
+            break
+        end
+        
+        -- Move to the target barrel
+        if not sortingTurtle.moveToBarrel(targetBarrel.position) then
+            print("Error: Could not move to barrel!")
+            errorCount = errorCount + 1
+            break
+        end
+        
+        -- Drop the item into the barrel
+        if not turtle.drop() then
+            print("Error: Could not drop item into barrel!")
+            errorCount = errorCount + 1
+            break
+        end
+        
+        -- Update barrel contents
+        table.insert(targetBarrel.contents.items, {
+            name = itemDetail.name,
+            displayName = itemDetail.displayName or itemDetail.name
+        })
+        targetBarrel.contents.isEmpty = false
+        targetBarrel.contents.category = category
+        
+        -- Restore original selected slot
+        if not turtle.select(currentSlot) then
+            print("Warning: Could not restore original slot!")
+        end
+        
+        -- Update sorted item count
+        sortedItems = sortedItems + 1
+    end
+    
+    -- Return to the input chest
+    sortingTurtle.returnToChest()
+    
+    -- Print summary
+    print(string.format("Sorted %d items out of %d (Errors: %d)", sortedItems, totalItems, errorCount))
+end
+
+-- Function to resort items between barrels
+function sortingTurtle.resort()
+    print("Resorting items between barrels...")
+    
+    local totalItemsMoved = 0
+    local barrelsProcessed = 0
+    
+    -- Process each barrel
+    for _, barrel in ipairs(sortingTurtle.barrels) do
+        -- Skip empty barrels
+        if not barrel.contents.isEmpty then
+            barrelsProcessed = barrelsProcessed + 1
+            
+            -- Process each item in the barrel
+            for _, item in ipairs(barrel.contents.items) do
+                -- Categorize the item
+                local category = sortingTurtle.getItemCategory(item.name)
+                if not category then
+                    print("Error: Could not categorize item!")
+                    break
+                end
+                
+                -- Find a barrel for this category
+                local targetBarrel = nil
+                for _, otherBarrel in ipairs(sortingTurtle.barrels) do
+                    if otherBarrel.contents.isEmpty or (otherBarrel.contents.category == category) then
+                        targetBarrel = otherBarrel
+                        break
+                    end
+                end
+                
+                -- If no suitable barrel found, try to find an empty one
+                if not targetBarrel then
+                    for _, otherBarrel in ipairs(sortingTurtle.barrels) do
+                        if otherBarrel.contents.isEmpty then
+                            targetBarrel = otherBarrel
+                            break
+                        end
+                    end
+                end
+                
+                -- If still no barrel found, give up
+                if not targetBarrel then
+                    print("Error: Could not find a suitable barrel!")
+                    break
+                end
+                
+                -- Move to the target barrel
+                if not sortingTurtle.moveToBarrel(targetBarrel.position) then
+                    print("Error: Could not move to barrel!")
+                    break
+                end
+                
+                -- Suck the item from the current barrel
+                local currentSlot = turtle.getSelectedSlot()
+                if not currentSlot then
+                    print("Error: Could not get current slot!")
+                    break
+                end
+                
+                if not turtle.suck() then
+                    print("Error: Could not suck item from barrel!")
+                    break
+                end
+                
+                -- Drop the item into the target barrel
+                if not turtle.drop() then
+                    print("Error: Could not drop item into barrel!")
+                    break
+                end
+                
+                -- Update barrel contents
+                table.insert(targetBarrel.contents.items, {
+                    name = item.name,
+                    displayName = item.displayName
+                })
+                targetBarrel.contents.isEmpty = false
+                targetBarrel.contents.category = category
+                
+                -- Restore original selected slot
+                if not turtle.select(currentSlot) then
+                    print("Warning: Could not restore original slot!")
+                end
+                
+                -- Update item count
+                totalItemsMoved = totalItemsMoved + 1
+            end
+        end
+    end
+    
+    -- Return to the input chest
+    sortingTurtle.returnToChest()
+    
+    -- Print summary
+    print(string.format("Moved %d items across %d barrels", totalItemsMoved, barrelsProcessed))
+end
+
+-- Main loop
+print("=== Smart Sorting Turtle v3.2 ===")
+print("Setup Instructions:")
+print("1. Place input storage (chest or barrel)")
+print("2. Place sorting barrels in rows to the left of the input storage")
+print("3. You can stack barrels vertically (up to 3 levels high)")
+print("4. Place turtle directly behind the input storage, facing it")
+print("5. Ensure all barrels are accessible")
+print("\nLayout can look like this:")
+print("Level 2:  [B][B][B]...")
+print("Level 1:  [B][B][B]...")
+print("Level 0:  [S][B][B][B]...")
+print("          [T]")
+print("Where: T=Turtle (facing up), S=Input Storage, B=Sorting Barrels")
+
+-- Initialize state
+local lastCheckTime = os.epoch("local")
+local lastMessageTime = lastCheckTime
+local IDLE_CHECK_INTERVAL = 2  -- Check for items every 2 seconds
+local MESSAGE_INTERVAL = 30    -- Show waiting message every 30 seconds
+local hasScanned = false
+
+-- Main processing loop
+while true do
+    local currentTime = os.epoch("local")
+    
+    -- Check for items in input storage
+    if sortingTurtle.checkInputStorage() then
+        -- First-time setup
+        if not hasScanned then
+            print("\nFirst items detected! Performing initial scan...")
+            sortingTurtle.scanBarrels()
+            
+            if sortingTurtle.numBarrels == 0 then
+                print("Error: No barrels found during scan!")
+                print("Please check barrel setup and restart the program.")
+                break
+            end
+            
+            hasScanned = true
+            print("\nPerforming initial resort of existing items...")
+            sortingTurtle.resort()
+        end
+        
+        -- Regular operation
+        print("\nProcessing items from input storage...")
+        
+        -- Check if we need to rescan
+        if currentTime - sortingTurtle.lastScanTime > sortingTurtle.config.SCAN_INTERVAL then
+            print("Performing periodic barrel rescan...")
+            sortingTurtle.scanBarrels()
+            
+            if sortingTurtle.numBarrels == 0 then
+                print("Error: Lost connection to barrels!")
+                print("Please check barrel setup and restart the program.")
+                break
+            end
+            
+            print("\nResorting items after scan...")
+            sortingTurtle.resort()
+        end
+        
+        -- Sort new items
+        sortingTurtle.sortItems()
+        lastCheckTime = currentTime
+        lastMessageTime = currentTime
+        
+    else
+        -- Show periodic waiting message
+        if currentTime - lastMessageTime >= MESSAGE_INTERVAL then
+            if not hasScanned then
+                print("Waiting for first items... (Press Ctrl+T to exit)")
+            else
+                print("Waiting for more items... (Press Ctrl+T to exit)")
+            end
+            lastMessageTime = currentTime
+        end
+        
+        -- Wait before next check
+        os.sleep(IDLE_CHECK_INTERVAL)
+    end
+end
+
+-- Function to define categories
 function sortingTurtle.defineCategories()
     local prompt = [[
 Define a list of Minecraft item categories for sorting items into barrels.
@@ -1497,5 +1587,6 @@ while true do
     end
 end
 
+-- Return the module
 return sortingTurtle
 
