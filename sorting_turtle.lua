@@ -939,6 +939,29 @@ One category per line, matching the number of barrels.]],
     return true
 end
 
+-- Helper function to find a barrel by category
+function sortingTurtle.findBarrelByCategory(category, preferNonEmpty)
+    -- First try to find a barrel with the exact category that matches our preference
+    for barrelNum, assignedCategory in pairs(sortingTurtle.barrelAssignments) do
+        if assignedCategory == category then
+            local barrel = sortingTurtle.barrels[barrelNum]
+            if (preferNonEmpty and not barrel.contents.isEmpty) or
+               (not preferNonEmpty and barrel.contents.isEmpty) then
+                return barrelNum
+            end
+        end
+    end
+    
+    -- If no preferred barrel found, try any barrel with the category
+    for barrelNum, assignedCategory in pairs(sortingTurtle.barrelAssignments) do
+        if assignedCategory == category then
+            return barrelNum
+        end
+    end
+    
+    return nil
+end
+
 -- Enhanced getBarrelSlot function that uses category assignments
 function sortingTurtle.getBarrelSlot(itemName, itemDisplayName)
     if sortingTurtle.numBarrels == 0 then return nil end
@@ -997,18 +1020,16 @@ If no category clearly fits, return 'unknown'.]],
         return 1  -- Return first barrel (unknown) if invalid category
     end
     
-    -- First, try to find a barrel already assigned to this category that has items
-    for barrelNum, category in pairs(sortingTurtle.barrelAssignments) do
-        if category == itemCategory and not sortingTurtle.barrels[barrelNum].contents.isEmpty then
-            return barrelNum
-        end
+    -- Try to find a non-empty barrel with matching category first
+    local barrelNum = sortingTurtle.findBarrelByCategory(itemCategory, true)
+    if barrelNum then
+        return barrelNum
     end
     
-    -- If no existing barrel with items found, try to find an empty barrel assigned to this category
-    for barrelNum, category in pairs(sortingTurtle.barrelAssignments) do
-        if category == itemCategory and sortingTurtle.barrels[barrelNum].contents.isEmpty then
-            return barrelNum
-        end
+    -- If no non-empty barrel found, try to find an empty one
+    barrelNum = sortingTurtle.findBarrelByCategory(itemCategory, false)
+    if barrelNum then
+        return barrelNum
     end
     
     -- If no barrel found for the specific category, use unknown (first barrel)
@@ -1337,9 +1358,10 @@ function sortingTurtle.scanBarrels()
                 print(string.format("Barrel %d: %s", barrel, category))
             end
             
-            -- Perform resort operation after category assignment
-            print("\nStarting resort operation to reorganize items...")
+            -- Perform resort operation after category assignment but before any new sorting
+            print("\nStarting resort operation to reorganize existing items...")
             sortingTurtle.resort()
+            print("Resort complete - ready to process new items.")
         else
             print("Warning: Could not assign categories to barrels")
         end
