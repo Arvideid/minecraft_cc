@@ -1228,7 +1228,7 @@ function sortingTurtle.scanBarrels()
         
         print(string.format("\nScanning level %d...", level))
         
-        -- Scan horizontally on current level
+        -- Forward scan - check barrels while moving forward
         while horizontalSteps < sortingTurtle.layout.maxHorizontalSteps do
             -- Turn right to face potential barrel
             turtle.turnRight()
@@ -1273,7 +1273,7 @@ function sortingTurtle.scanBarrels()
             end
         end
         
-        -- Return to start of current row
+        -- Quick return - just move back without checking barrels
         while horizontalSteps > 0 do
             turtle.back()
             sortingTurtle.addToHistory("back")
@@ -1346,35 +1346,40 @@ print("          [T]")
 print("Where: T=Turtle (facing up), S=Input Storage, B=Sorting Barrels")
 print("The turtle will scan and use all accessible barrels")
 
--- Do initial barrel scan
-print("\nPerforming initial barrel scan...")
-sortingTurtle.scanBarrels()
-
-if sortingTurtle.numBarrels == 0 then
-    print("\nNo barrels found! Please set up barrels and restart the program.")
-    return sortingTurtle
-end
-
-print("\nReady to sort items!")
-print("Waiting for items in input storage...")
+print("\nWaiting for items in input storage...")
+print("First item detection will trigger initial barrel scan")
 
 local lastCheckTime = 0
 local IDLE_CHECK_INTERVAL = 2  -- Check for items every 2 seconds when idle
+local hasScanned = false
 
 while true do
     local currentTime = os.epoch("local")
     
     -- Check if there are items to sort
     if sortingTurtle.hasItemsInStorage() then
-        print("\nDetected items in storage!")
-        
-        -- Scan barrels and update categories every time we find new items
-        print("Scanning barrels and updating categories...")
-        sortingTurtle.scanBarrels()
-        if sortingTurtle.numBarrels == 0 then
-            print("Error: No barrels found during scan!")
-            print("Please check barrel setup and restart the program.")
-            break
+        -- If this is our first item detection, do initial setup
+        if not hasScanned then
+            print("\nFirst items detected! Performing initial barrel scan...")
+            sortingTurtle.scanBarrels()
+            if sortingTurtle.numBarrels == 0 then
+                print("Error: No barrels found during scan!")
+                print("Please check barrel setup and restart the program.")
+                break
+            end
+            hasScanned = true
+        else
+            print("\nDetected items in storage!")
+            -- Only rescan if it's been a while since last scan
+            if currentTime - sortingTurtle.lastScanTime > sortingTurtle.config.SCAN_INTERVAL then
+                print("Rescanning barrels for changes...")
+                sortingTurtle.scanBarrels()
+                if sortingTurtle.numBarrels == 0 then
+                    print("Error: No barrels found during scan!")
+                    print("Please check barrel setup and restart the program.")
+                    break
+                end
+            end
         end
         
         -- Sort the items
@@ -1384,7 +1389,11 @@ while true do
     else
         -- If we haven't checked recently, update the idle message
         if currentTime - lastCheckTime > 30 then  -- Show message every 30 seconds
-            print("Waiting for items... (Press Ctrl+T to exit)")
+            if not hasScanned then
+                print("Waiting for first items... (Press Ctrl+T to exit)")
+            else
+                print("Waiting for more items... (Press Ctrl+T to exit)")
+            end
             lastCheckTime = currentTime
         end
         os.sleep(IDLE_CHECK_INTERVAL)  -- Wait before checking again
