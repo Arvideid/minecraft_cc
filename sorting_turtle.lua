@@ -716,14 +716,26 @@ function sortingTurtle.analyzeBulkBarrels()
     -- Create a structured analysis prompt
     local prompt = string.format([[
 You are a Minecraft storage system analyzer. Your task is to analyze this storage system and output a STRICT JSON response.
+Focus on organizing items by their practical use and material type, not by mods.
 
 Current Storage System:
 %s
 
-Instructions:
-1. Analyze each barrel's contents and determine its purpose
-2. Consider mod groupings, crafting relationships, and gameplay mechanics
-3. For empty barrels, suggest an optimal purpose based on the overall system
+Organization Rules:
+1. Group similar items together regardless of mod source (e.g., all wood types together, all metals together)
+2. Consider item function over source (e.g., all storage blocks together, all tools together)
+3. Group by material type (e.g., wood, stone, metal, organic)
+4. Consider crafting relationships (e.g., raw materials with their processed forms)
+
+Common Groups Examples:
+- Woods: logs, planks, sticks (from any mod)
+- Metals: ingots, nuggets, blocks, raw ores
+- Building: stone, bricks, glass, concrete
+- Tools: all tools regardless of material
+- Storage: chests, barrels, crates
+- Farm: seeds, crops, food
+- Tech: machine parts, circuits
+- Magic: magical ingredients, crystals
 
 Response Format:
 You MUST return a valid JSON array in this EXACT format:
@@ -731,28 +743,19 @@ You MUST return a valid JSON array in this EXACT format:
   {
     "barrel": 1,
     "purpose": "Brief purpose description",
-    "suggested_items": ["item type 1", "item type 2"]
-  },
-  {
-    "barrel": 2,
-    "purpose": "Brief purpose description",
-    "suggested_items": ["item type 1", "item type 2"]
+    "suggested_items": ["item type 1", "item type 2"],
+    "category": "material_type"
   }
 ]
 
 Requirements:
 - "barrel" must be a number from 1 to %d
-- "purpose" must be a single line of text
-- "suggested_items" must be an array of strings
+- "purpose" must be a single line describing the barrel's contents and theme
+- "suggested_items" must list similar items that would fit well
+- "category" must be one of: wood, metal, stone, organic, tool, machine, storage, magic, misc
 - Response must be valid JSON
 - Include ALL barrels
 - No explanation text, ONLY the JSON array
-
-Organization Guidelines:
-- Group items from the same mod together
-- Consider crafting and gameplay relationships
-- Separate tech mods from magic mods
-- Keep vanilla Minecraft items logically grouped
 ]], barrelContext, sortingTurtle.numBarrels)
 
     local response = llm.getGeminiResponse(prompt)
@@ -764,7 +767,8 @@ Organization Guidelines:
                 if analysis.barrel and analysis.purpose then
                     sortingTurtle.barrels[analysis.barrel].analysis = {
                         purpose = analysis.purpose,
-                        suggested_items = analysis.suggested_items
+                        suggested_items = analysis.suggested_items,
+                        category = analysis.category
                     }
                 end
             end
@@ -900,18 +904,19 @@ function sortingTurtle.getBarrelSlot(itemName)
         end
         if barrel.analysis then
             barrelContext = barrelContext .. string.format("\nPurpose: %s", barrel.analysis.purpose)
+            barrelContext = barrelContext .. string.format("\nCategory: %s", barrel.analysis.category)
         end
     end
     
-    -- Extract mod information
+    -- Extract mod information and base name
     local modPrefix, baseName = itemName:match("^([^:]+):(.+)$")
     
     -- Construct a structured prompt
     local prompt = string.format([[
 You are a Minecraft item sorter. Your task is to determine the best barrel for storing an item.
+Focus on the item's material and function, not its mod source.
 
 Item to Store: %s
-Mod: %s
 Base Name: %s
 
 Current Storage System:
@@ -919,22 +924,23 @@ Current Storage System:
 
 Selection Rules (in priority order):
 1. EXACT MATCH: If a barrel already contains this exact item
-2. THEME MATCH: If a barrel's purpose matches this item's function
-3. MOD MATCH: If a barrel contains items from the same mod
+2. MATERIAL MATCH: If a barrel contains items of the same material type (e.g., wood with wood)
+3. FUNCTION MATCH: If a barrel contains items with similar function (e.g., tools with tools)
 4. EMPTY BARREL: If no good matches exist
+
+Special Grouping Rules:
+- All wood types (logs, planks, sticks) should go together
+- All metal types (ingots, nuggets, ores) should go together
+- All tools of similar function should go together
+- All storage blocks should go together
+- All crops and food should go together
 
 Response Format:
 You MUST return ONLY a single number between 1 and %d.
 No explanation, no JSON, no other text.
 Just the barrel number.
-
-Example correct responses:
-1
-4
-12
 ]], 
         itemName,
-        modPrefix or "unknown",
         baseName or itemName,
         barrelContext,
         sortingTurtle.numBarrels)
