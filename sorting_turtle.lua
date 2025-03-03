@@ -1184,6 +1184,9 @@ function sortingTurtle.scanBarrels()
     sortingTurtle.numBarrels = 0
     local steps = 0
     
+    -- Clear movement history at start of scan
+    sortingTurtle.moveHistory = {}
+    
     -- Check fuel before starting
     if not sortingTurtle.checkFuel() then
         print("Cannot scan: Insufficient fuel!")
@@ -1193,11 +1196,13 @@ function sortingTurtle.scanBarrels()
     -- Turn left to face the barrels if not already facing them
     while sortingTurtle.position.facing ~= 3 do  -- 3 is west (left)
         turtle.turnLeft()
+        sortingTurtle.addToHistory("turnLeft")
         sortingTurtle.updatePosition("turnLeft")
     end
     
     -- Move forward one step to be in line with barrels
     if turtle.forward() then
+        sortingTurtle.addToHistory("forward")
         sortingTurtle.updatePosition("forward")
     else
         print("Cannot move forward to start scanning!")
@@ -1209,6 +1214,7 @@ function sortingTurtle.scanBarrels()
     while steps < sortingTurtle.config.MAX_STEPS do
         -- Turn right to face potential barrel
         turtle.turnRight()
+        sortingTurtle.addToHistory("turnRight")
         sortingTurtle.updatePosition("turnRight")
         
         -- Check for barrel
@@ -1234,10 +1240,12 @@ function sortingTurtle.scanBarrels()
         
         -- Turn back to face the path
         turtle.turnLeft()
+        sortingTurtle.addToHistory("turnLeft")
         sortingTurtle.updatePosition("turnLeft")
         
         -- Try to move forward
         if turtle.forward() then
+            sortingTurtle.addToHistory("forward")
             sortingTurtle.updatePosition("forward")
             steps = steps + 1
         else
@@ -1245,31 +1253,31 @@ function sortingTurtle.scanBarrels()
         end
     end
     
-    -- Return to initial position using same logic as sorting function
-    -- First turn back to face the path (west)
-    while sortingTurtle.position.facing ~= 3 do  -- 3 is west (left)
-        turtle.turnLeft()
-        sortingTurtle.updatePosition("turnLeft")
-    end
-    
-    -- Move back to the chest position
-    while sortingTurtle.position.x < 0 do
-        if turtle.forward() then
-            sortingTurtle.updatePosition("forward")
-        else
-            break
+    -- Return to initial position by retracing steps
+    print("Returning to initial position...")
+    for i = #sortingTurtle.moveHistory, 1, -1 do
+        local movement = sortingTurtle.moveHistory[i]
+        local reverseMove = sortingTurtle.getReverseMovement(movement)
+        if reverseMove then
+            if reverseMove == "forward" then
+                turtle.forward()
+            elseif reverseMove == "back" then
+                turtle.back()
+            elseif reverseMove == "turnLeft" then
+                turtle.turnLeft()
+            elseif reverseMove == "turnRight" then
+                turtle.turnRight()
+            elseif reverseMove == "up" then
+                turtle.up()
+            elseif reverseMove == "down" then
+                turtle.down()
+            end
+            sortingTurtle.updatePosition(reverseMove)
         end
     end
     
-    -- Move back one step to be behind the input storage
-    turtle.back()
-    sortingTurtle.updatePosition("back")
-    
-    -- Turn to face the input storage (north)
-    while sortingTurtle.position.facing ~= 0 do
-        turtle.turnLeft()
-        sortingTurtle.updatePosition("turnLeft")
-    end
+    -- Clear movement history after returning
+    sortingTurtle.moveHistory = {}
     
     -- Print barrel summary
     if sortingTurtle.numBarrels > 0 then
