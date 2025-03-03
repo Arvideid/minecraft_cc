@@ -25,12 +25,10 @@ sortingTurtle.lastScanTime = 0
 sortingTurtle.position = { x = 0, y = 0, z = 0, facing = 0 }  -- 0=north, 1=east, 2=south, 3=west
 sortingTurtle.moveHistory = {}  -- Track movement history
 
--- Add persistent barrel memory
+-- Simplified barrel memory (runtime only)
 sortingTurtle.barrelMemory = {
-    categories = {},  -- Store learned categories
-    barrelAssignments = {},  -- Track barrel assignments
-    lastSave = 0,    -- Track when we last saved
-    SAVE_INTERVAL = 300  -- Save every 5 minutes if changes occurred
+    categories = {},  -- Store categories
+    barrelAssignments = {}  -- Track barrel assignments
 }
 
 -- Function to add movement to history
@@ -732,6 +730,43 @@ Requirements:
     return false
 end
 
+-- Function to define initial categories
+function sortingTurtle.defineCategories()
+    local prompt = [[
+Define logical categories for a Minecraft storage system. Consider common item groupings and gameplay patterns.
+Categories should be comprehensive enough to cover most items but specific enough to be meaningful.
+
+Return a JSON array of category objects in this EXACT format:
+[
+  {
+    "name": "category_name",
+    "description": "Brief description of what belongs in this category",
+    "examples": ["example_item_1", "example_item_2"]
+  }
+]
+
+Categories should cover:
+1. Building blocks and materials
+2. Tools and equipment
+3. Resources and raw materials
+4. Food and farming
+5. Redstone and mechanisms
+6. Combat and armor
+7. Decorative items
+8. Miscellaneous items
+
+Each category should be distinct and clear in its purpose.]]
+
+    local response = llm.getGeminiResponse(prompt)
+    if response then
+        local success, categories = pcall(textutils.unserializeJSON, response)
+        if success and categories then
+            return categories
+        end
+    end
+    return nil
+end
+
 -- Function to assign categories to barrels
 function sortingTurtle.assignBarrelCategories()
     if sortingTurtle.numBarrels == 0 then return end
@@ -802,9 +837,6 @@ Rules:
                         assignment.barrel, assignment.category))
                 end
             end
-            
-            -- Save the updated memory
-            sortingTurtle.saveBarrelMemory()
             return true
         end
     end
@@ -1125,10 +1157,6 @@ end
 
 -- Main loop
 print("=== Smart Sorting Turtle v2.9 ===")
-print("Loading barrel memory...")
-if not sortingTurtle.loadBarrelMemory() then
-    print("No previous barrel memory found, starting fresh.")
-end
 print("Setup Instructions:")
 print("1. Place input storage (chest or barrel)")
 print("2. Place sorting barrels in a line to the left of the input storage")
