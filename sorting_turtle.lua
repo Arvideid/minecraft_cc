@@ -39,6 +39,9 @@ sortingTurtle.layout = {
     currentLevel = 0          -- Current vertical level being scanned
 }
 
+-- Add item category cache to the module
+sortingTurtle.itemCategories = {}  -- Cache of item name -> category mappings
+
 -- Function to add movement to history
 function sortingTurtle.addToHistory(movement)
     table.insert(sortingTurtle.moveHistory, movement)
@@ -183,19 +186,74 @@ function sortingTurtle.readBarrel()
     return contents
 end
 
--- Function to categorize items (helps with grouping similar items)
-function sortingTurtle.getItemCategory(itemName)
-    if not itemName then return "unknown" end
+-- Function to cache an item's category
+function sortingTurtle.cacheItemCategory(itemName, itemDisplayName, category)
+    sortingTurtle.itemCategories[itemName] = {
+        category = category,
+        displayName = itemDisplayName
+    }
+end
+
+-- Function to get cached category or request new one
+function sortingTurtle.getItemCategory(itemName, itemDisplayName)
+    -- Check cache first
+    if sortingTurtle.itemCategories[itemName] then
+        return sortingTurtle.itemCategories[itemName].category
+    end
     
-    -- Convert itemName to lowercase for case-insensitive matching
-    itemName = string.lower(itemName)
+    -- If not in cache, request from LLM
+    local categoriesText = table.concat(sortingTurtle.categories, "\n")
+    local prompt = string.format([[
+Categorize this Minecraft item into one of the available categories.
+You MUST be very specific and strict in categorization.
+
+Item Details:
+Name: %s
+Display Name: %s
+
+Available Categories (in order of priority):
+%s
+
+STRICT CATEGORIZATION RULES:
+1. Each basic block type MUST go to its specific category (dirt_and_grass, stone_blocks, cobblestone, etc.)
+2. DO NOT group different basic blocks together even if they are all building blocks
+3. Wood items MUST be split between logs and planks categories
+4. If the item is from a specific mod, use that mod's category
+5. Tools must be split between basic and powered categories
+6. Food must be split between basic and advanced categories
+7. If unsure, use 'unknown' - better to be uncertain than wrong
+8. Match EXACT category names - no partial matches
+9. Consider the item's primary use, not secondary uses
+
+Return ONLY the exact category name that matches this item best.
+If no category clearly fits, return 'unknown'.]], 
+        itemName,
+        itemDisplayName,
+        categoriesText)
     
-    -- Extract mod prefix and base name
-    local modPrefix, baseName = itemName:match("^([^:]+):(.+)$")
-    if not modPrefix then return "unknown" end
+    local category = llm.getGeminiResponse(prompt)
+    if not category then 
+        category = "unknown"
+    else
+        -- Clean up the response
+        category = category:gsub('"', ''):gsub("^%s*(.-)%s*$", "%1")
+        
+        -- Verify category is valid
+        local isValid = false
+        for _, validCategory in ipairs(sortingTurtle.categories) do
+            if category == validCategory then
+                isValid = true
+                break
+            end
+        end
+        if not isValid then
+            category = "unknown"
+        end
+    end
     
-    -- Just return the mod prefix and base name for the LLM to handle categorization
-    return modPrefix .. "_" .. baseName
+    -- Cache the result
+    sortingTurtle.cacheItemCategory(itemName, itemDisplayName, category)
+    return category
 end
 
 -- Function to check and maintain fuel levels
@@ -962,63 +1020,70 @@ function sortingTurtle.findBarrelByCategory(category, preferNonEmpty)
     return nil
 end
 
--- Enhanced getBarrelSlot function that uses category assignments
-function sortingTurtle.getBarrelSlot(itemName, itemDisplayName)
-    if sortingTurtle.numBarrels == 0 then return nil end
+-- Function to analyze barrel contents and suggest new categories
+function sortingTurtle.analyzeAndUpdateCategories()
+    -- Create context of all items in all barrels
+    local itemContext = "Current items in system:\n"
+    local allItems = {}
     
-    -- First, determine which category this item belongs to
-    local categoriesText = table.concat(sortingTurtle.categories, "\n")
-    local prompt = string.format([[
-Categorize this Minecraft item into one of the available categories.
-You MUST be very specific and strict in categorization.
-
-Item Details:
-Name: %s
-Display Name: %s
-
-Available Categories (in order of priority):
-%s
-
-STRICT CATEGORIZATION RULES:
-1. Each basic block type MUST go to its specific category (dirt_and_grass, stone_blocks, cobblestone, etc.)
-2. DO NOT group different basic blocks together even if they are all building blocks
-3. Wood items MUST be split between logs and planks categories
-4. If the item is from a specific mod, use that mod's category
-5. Tools must be split between basic and powered categories
-6. Food must be split between basic and advanced categories
-7. If unsure, use 'unknown' - better to be uncertain than wrong
-8. Match EXACT category names - no partial matches
-9. Consider the item's primary use, not secondary uses
-
-Return ONLY the exact category name that matches this item best.
-If no category clearly fits, return 'unknown'.]], 
-        itemName,
-        itemDisplayName,
-        categoriesText)
-    
-    local itemCategory = llm.getGeminiResponse(prompt)
-    if not itemCategory then 
-        print("No category response received, defaulting to unknown")
-        return 1  -- Return first barrel (unknown) if no response
-    end
-    
-    -- Clean up the response (remove any quotes or whitespace)
-    itemCategory = itemCategory:gsub('"', ''):gsub("^%s*(.-)%s*$", "%1")
-    
-    -- Verify the category is valid
-    local isValidCategory = false
-    for _, category in ipairs(sortingTurtle.categories) do
-        if category == itemCategory then
-            isValidCategory = true
-            break
+    for barrelNum, barrel in ipairs(sortingTurtle.barrels) do
+        if not barrel.contents.isEmpty then
+            for _, item in ipairs(barrel.contents.items) do
+                table.insert(allItems, {
+                    name = item.name,
+                    displayName = item.displayName,
+                    currentCategory = sortingTurtle.barrelAssignments[barrelNum]
+                })
+                itemContext = itemContext .. string.format("\n- %s (currently in %s)", 
+                    item.displayName, sortingTurtle.barrelAssignments[barrelNum])
+            end
         end
     end
     
-    if not isValidCategory then
-        print(string.format("Warning: Invalid category '%s' returned for item %s, using unknown", 
-            itemCategory, itemDisplayName or itemName))
-        return 1  -- Return first barrel (unknown) if invalid category
+    -- If we have items, analyze for patterns and suggest new categories
+    if #allItems > 0 then
+        local prompt = string.format([[
+Analyze these Minecraft items and their current categories.
+Suggest new categories ONLY if you see clear patterns that our current categories don't cover.
+
+Current items and their categories:
+%s
+
+Current categories:
+%s
+
+RULES:
+1. Only suggest new categories if there's a clear pattern
+2. Categories must be specific and non-overlapping
+3. Follow the same naming pattern as existing categories
+4. Don't suggest categories we already have
+5. Focus on groups of similar items that don't fit well in current categories
+
+Return ONLY new category suggestions, one per line.
+If no new categories are needed, return "NO_NEW_CATEGORIES"]], 
+            itemContext,
+            table.concat(sortingTurtle.categories, "\n"))
+        
+        local response = llm.getGeminiResponse(prompt)
+        if response and response ~= "NO_NEW_CATEGORIES" then
+            -- Add any new categories
+            for line in response:gmatch("[^\r\n]+") do
+                local newCategory = line:gsub('"', ''):gsub("^%s*(.-)%s*$", "%1")
+                if newCategory ~= "" and not sortingTurtle.categories[newCategory] then
+                    table.insert(sortingTurtle.categories, newCategory)
+                    print("Added new category: " .. newCategory)
+                end
+            end
+        end
     end
+end
+
+-- Enhanced getBarrelSlot function that uses cached categories
+function sortingTurtle.getBarrelSlot(itemName, itemDisplayName)
+    if sortingTurtle.numBarrels == 0 then return nil end
+    
+    -- Get category (from cache or LLM)
+    local itemCategory = sortingTurtle.getItemCategory(itemName, itemDisplayName)
     
     -- Try to find a non-empty barrel with matching category first
     local barrelNum = sortingTurtle.findBarrelByCategory(itemCategory, true)
@@ -1141,7 +1206,7 @@ function sortingTurtle.sortItems()
         
         local itemDetail = turtle.getItemDetail()
         if itemDetail then
-            local itemCategory = sortingTurtle.getItemCategory(itemDetail.name)
+            local itemCategory = sortingTurtle.getItemCategory(itemDetail.name, itemDetail.displayName)
             print(string.format("\nProcessing: %s (Category: %s)", 
                 itemDetail.displayName or itemDetail.name,
                 itemCategory))
@@ -1372,7 +1437,7 @@ function sortingTurtle.scanBarrels()
     sortingTurtle.lastScanTime = os.epoch("local")
 end
 
--- Function to resort items between barrels after a scan
+-- Updated resort function that uses cached categories
 function sortingTurtle.resort()
     print("\n=== Starting Resort Operation ===")
     
@@ -1384,6 +1449,10 @@ function sortingTurtle.resort()
         print("Error: No barrels found!")
         return
     end
+    
+    -- First, analyze all items and update categories if needed
+    print("Analyzing item patterns...")
+    sortingTurtle.analyzeAndUpdateCategories()
     
     -- Track statistics
     local itemsMoved = 0
@@ -1402,7 +1471,7 @@ function sortingTurtle.resort()
                 while turtle.suck() do
                     local itemDetail = turtle.getItemDetail()
                     if itemDetail then
-                        -- Find the correct category and barrel for this item
+                        -- Use cached category information
                         local targetBarrelNum = sortingTurtle.getBarrelSlot(itemDetail.name, itemDetail.displayName)
                         
                         -- If the target barrel is different from current barrel, move the item
