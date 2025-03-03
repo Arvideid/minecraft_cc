@@ -892,23 +892,32 @@ function sortingTurtle.getBarrelSlot(itemName, itemDisplayName)
     -- First, determine which category this item belongs to
     local categoriesText = table.concat(sortingTurtle.categories, "\n")
     local prompt = string.format([[
-Which category best fits this Minecraft item?
+Categorize this Minecraft item into one of the available categories.
+If you're unsure or the item doesn't clearly fit any specific category, use 'unknown'.
 
-Item:
+Item Details:
 Name: %s
 Display Name: %s
 
-Available Categories:
+Available Categories (in order of priority):
 %s
 
-Return ONLY the category name from the list above that best fits this item.
-Just the category name, nothing else.]], 
+IMPORTANT RULES:
+1. Return ONLY the category name, nothing else
+2. If unsure, ALWAYS use 'unknown' category
+3. Only use 'problematic_items' if the item is causing system issues
+4. The category MUST be from the list above, no exceptions
+
+Return just the category name:]], 
         itemName,
         itemDisplayName,
         categoriesText)
     
     local itemCategory = llm.getGeminiResponse(prompt)
-    if not itemCategory then return nil end
+    if not itemCategory then 
+        print("No category response received, defaulting to unknown")
+        return 1  -- Return first barrel (unknown) if no response
+    end
     
     -- Clean up the response (remove any quotes or whitespace)
     itemCategory = itemCategory:gsub('"', ''):gsub("^%s*(.-)%s*$", "%1")
@@ -923,9 +932,9 @@ Just the category name, nothing else.]],
     end
     
     if not isValidCategory then
-        print(string.format("Warning: Invalid category '%s' returned for item %s", 
+        print(string.format("Warning: Invalid category '%s' returned for item %s, using unknown", 
             itemCategory, itemDisplayName or itemName))
-        return nil
+        return 1  -- Return first barrel (unknown) if invalid category
     end
     
     -- First, try to find a barrel already assigned to this category that has items
@@ -942,8 +951,16 @@ Just the category name, nothing else.]],
         end
     end
     
-    -- If no barrel found, return nil
-    return nil
+    -- If no barrel found for the specific category, use unknown (first barrel)
+    if itemCategory ~= "unknown" then
+        print(string.format("No barrel available for category '%s', using unknown", itemCategory))
+        return 1
+    end
+    
+    -- If we get here and the item category is unknown but we can't find an unknown barrel,
+    -- something is wrong with our barrel assignments
+    print("Warning: Could not find unknown barrel! This should never happen!")
+    return 1  -- Still try the first barrel as a last resort
 end
 
 -- Function to check if block in front is a valid storage
