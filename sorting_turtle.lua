@@ -629,69 +629,57 @@ end
 function sortingTurtle.analyzeBarrelContents(barrel)
     if not barrel or not barrel.contents then return nil end
     
+    -- Build complete context
+    local context = {
+        current_barrel = barrel,
+        all_barrels = sortingTurtle.barrels,
+        memory = sortingTurtle.barrelMemory
+    }
+    
     local prompt = string.format([[
-Analyze this Minecraft barrel's contents to determine its purpose and suggest what other items would fit well in it.
-
-Current Contents:
-Name: %s
-Display Name: %s
-Category: %s
+Analyze this Minecraft barrel's contents. You have no memory of previous analyses.
+Complete current state:
+%s
 
 Consider:
-1. What is the main theme/purpose of this barrel?
-2. What types of items would logically belong here?
-3. Are there related items from the same mod that should go here?
-4. What crafting or gameplay relationships exist with these items?
+1. What items are currently in this barrel?
+2. What is the main theme/purpose based ONLY on current contents?
+3. What types of items would logically belong here?
+4. What crafting or gameplay relationships exist?
 
-Return a brief, one-line description of the barrel's purpose.]], 
-        barrel.contents.name,
-        barrel.contents.displayName,
-        barrel.contents.category)
+Return a single line describing the barrel's purpose.]], 
+        textutils.serialize(context))
     
     return llm.getGeminiResponse(prompt)
 end
 
--- Function to analyze all barrels at once using LLM
+-- Function to analyze all barrels with complete context
 function sortingTurtle.analyzeBulkBarrels()
     if #sortingTurtle.barrels == 0 then return end
     
-    -- Create a detailed context of all barrels and their contents
-    local barrelContext = "Current barrel setup:\n"
-    for i, barrel in ipairs(sortingTurtle.barrels) do
-        barrelContext = barrelContext .. string.format("\nBarrel %d:", i)
-        if barrel.contents.isEmpty then
-            barrelContext = barrelContext .. " EMPTY"
-        else
-            barrelContext = barrelContext .. "\nContains:"
-            for _, item in ipairs(barrel.contents.items) do
-                barrelContext = barrelContext .. string.format("\n- %s", item.displayName)
-            end
-        end
-    end
+    -- Build complete state context
+    local context = {
+        barrels = sortingTurtle.barrels,
+        memory = sortingTurtle.barrelMemory,
+        timestamp = os.epoch("local")
+    }
     
-    -- Create a structured analysis prompt
     local prompt = string.format([[
-You are a Minecraft storage system analyzer. Your task is to analyze this storage system and output a STRICT JSON response.
-Focus on organizing items by their logical relationships, crafting connections, and gameplay usage.
+You are analyzing a Minecraft storage system. You have no memory of previous analyses.
+Analyze the complete current state and suggest organization.
 
-Current Storage System:
+Complete Current State:
 %s
 
 Analysis Guidelines:
-1. Group items based on their natural relationships and common usage
-2. Consider crafting recipes and how items are used together in-game
-3. Look for patterns in existing barrel contents
-4. Think about what players would logically look for together
-
-Example Relationships (but don't limit yourself to these):
-- Building materials that are commonly used together
-- Items that are part of the same crafting chain
-- Items used for similar purposes in-game
-- Blocks with similar textures or materials
-- Items from the same game mechanic or feature
+1. Consider ONLY the provided current state
+2. Group items based on their natural relationships and common usage
+3. Consider crafting recipes and how items are used together
+4. Look for patterns in current barrel contents
+5. Think about what players would logically look for together
 
 Response Format:
-You MUST return a valid JSON array in this EXACT format:
+Return a valid JSON array in this EXACT format:
 [
   {
     "barrel": 1,
@@ -700,32 +688,24 @@ You MUST return a valid JSON array in this EXACT format:
   }
 ]
 
-Requirements:
-- "barrel" must be a number from 1 to %d
-- "purpose" must be a single line describing the barrel's contents and theme
-- "suggested_items" must list similar items that would fit well
-- Response must be valid JSON
-- Include ALL barrels
-- No explanation text, ONLY the JSON array
-]], barrelContext, sortingTurtle.numBarrels)
-
+Include ALL barrels, even empty ones.]], 
+        textutils.serialize(context))
+    
     local response = llm.getGeminiResponse(prompt)
     if response then
-        -- Parse the JSON response and update barrel information
         local success, analysisData = pcall(textutils.unserializeJSON, response)
         if success and analysisData then
+            -- Update barrel information with new analysis
             for _, analysis in ipairs(analysisData) do
                 if analysis.barrel and analysis.purpose then
                     sortingTurtle.barrels[analysis.barrel].analysis = {
                         purpose = analysis.purpose,
-                        suggested_items = analysis.suggested_items
+                        suggested_items = analysis.suggested_items,
+                        timestamp = os.epoch("local")
                     }
                 end
             end
             return true
-        else
-            print("Failed to parse LLM response. Response was:")
-            print(response)
         end
     end
     return false
@@ -913,80 +893,45 @@ Return a brief, one-line description of this barrel's refined purpose.]],
     end
 end
 
--- Enhanced getBarrelSlot function that uses memory
+-- Function to get barrel slot with complete context
 function sortingTurtle.getBarrelSlot(itemName, itemDisplayName)
-    if sortingTurtle.numBarrels == 0 then
-        return nil
-    end
-
-    -- Create context including both current state and learned categories
-    local barrelContext = "Current barrel setup and learned categories:\n"
-    for i, barrel in ipairs(sortingTurtle.barrels) do
-        barrelContext = barrelContext .. string.format("\nBarrel %d:", i)
-        
-        -- Add current contents
-        if not barrel.contents.isEmpty then
-            barrelContext = barrelContext .. "\nCurrent Contents:"
-            for _, item in ipairs(barrel.contents.items) do
-                barrelContext = barrelContext .. string.format("\n- %s", item.displayName)
-            end
-        else
-            barrelContext = barrelContext .. " EMPTY"
-        end
-        
-        -- Add learned category information
-        local category = sortingTurtle.barrelMemory.categories[i]
-        if category then
-            barrelContext = barrelContext .. "\nLearned Purpose: " .. category.purpose
-            barrelContext = barrelContext .. "\nKnown Items:"
-            for _, item in ipairs(category.items) do
-                barrelContext = barrelContext .. string.format("\n- %s", item.displayName)
-            end
-        end
-    end
+    if sortingTurtle.numBarrels == 0 then return nil end
     
-    -- Extract mod information and base name
-    local modPrefix, baseName = itemName:match("^([^:]+):(.+)$")
+    -- Build complete context including all current state
+    local context = {
+        item = {
+            name = itemName,
+            displayName = itemDisplayName
+        },
+        barrels = sortingTurtle.barrels,
+        memory = sortingTurtle.barrelMemory,
+        mod_prefix = itemName:match("^([^:]+)"),
+        base_name = itemName:match("^[^:]+:(.+)$")
+    }
     
-    -- Construct a structured prompt
     local prompt = string.format([[
-You are a Minecraft item sorter with memory of past decisions. Your task is to determine the best barrel for storing an item.
-Focus on both current contents and learned category patterns.
+You are a Minecraft item sorter. You have no memory of previous decisions.
+Your task is to determine the best barrel for storing an item based on the complete current state.
 
-Item to Store: %s
-Display Name: %s
-Base Name: %s
-
-Storage System State:
+Complete System State:
 %s
 
-Decision Guidelines:
-1. Consider both current contents AND learned categories
-2. Look for barrels where this item fits the established pattern
-3. For empty barrels, consider if this item could start a new logical category
-4. Maintain consistent categorization based on:
-   - Crafting relationships
-   - Building/gameplay usage patterns
-   - Material similarities
-   - Functional groups
+Guidelines:
+1. Consider ONLY the provided current state
+2. Look for barrels with similar or related items
+3. For empty barrels, consider if this could start a logical new category
+4. Consider crafting and gameplay relationships
+5. Group similar items together (e.g., all wood types, all stone types)
 
-Response Format:
-Return ONLY a single number between 1 and %d representing the best barrel choice.
-]], 
-        itemName,
-        itemDisplayName,
-        baseName or itemName,
-        barrelContext,
+Return ONLY a single number between 1 and %d representing the best barrel choice.]], 
+        textutils.serialize(context),
         sortingTurtle.numBarrels)
-
-    local response = llm.getGeminiResponse(prompt)
     
+    local response = llm.getGeminiResponse(prompt)
     if response then
         response = response:match("^%s*(%d+)%s*$")
         local barrelSlot = tonumber(response)
         if barrelSlot and barrelSlot >= 1 and barrelSlot <= sortingTurtle.numBarrels then
-            -- Update memory with this decision
-            sortingTurtle.updateBarrelMemory(barrelSlot, itemName, itemDisplayName)
             return barrelSlot
         end
     end
@@ -1159,6 +1104,108 @@ function sortingTurtle.hasItemsInStorage()
     return false
 end
 
+-- Function to analyze if reorganization is needed
+function sortingTurtle.analyzeReorganization()
+    -- Load complete barrel state into memory
+    local barrelState = {
+        barrels = {},
+        timestamp = os.epoch("local")
+    }
+    
+    -- Build complete state of all barrels
+    for i, barrel in ipairs(sortingTurtle.barrels) do
+        local barrelInfo = {
+            number = i,
+            contents = barrel.contents,
+            memory = sortingTurtle.barrelMemory.categories[i] or { items = {}, purpose = "" }
+        }
+        table.insert(barrelState.barrels, barrelInfo)
+    end
+    
+    -- Create analysis prompt with complete context
+    local prompt = string.format([[
+Analyze this Minecraft storage system's organization. Consider if items could be better organized.
+Current complete storage state:
+%s
+
+Guidelines:
+1. Look for items that should be grouped together but are in different barrels
+2. Identify barrels that have mixed unrelated items
+3. Consider crafting relationships and gameplay usage
+4. Suggest specific moves only if they clearly improve organization
+5. Be conservative - only suggest moves with high confidence
+
+Return a JSON response in this format:
+{
+    "needs_reorganization": true/false,
+    "moves": [
+        {
+            "from_barrel": 1,
+            "to_barrel": 2,
+            "reason": "Brief explanation"
+        }
+    ]
+}
+
+If no reorganization is needed, return {"needs_reorganization": false}
+]], textutils.serialize(barrelState))
+
+    local response = llm.getGeminiResponse(prompt)
+    if response then
+        local success, analysis = pcall(textutils.unserializeJSON, response)
+        if success and analysis then
+            return analysis
+        end
+    end
+    return { needs_reorganization = false }
+end
+
+-- Function to execute reorganization plan
+function sortingTurtle.reorganize()
+    print("\nAnalyzing storage organization...")
+    local plan = sortingTurtle.analyzeReorganization()
+    
+    if not plan.needs_reorganization then
+        print("Current organization is optimal!")
+        return
+    end
+    
+    print("\nReorganization needed!")
+    print("Planning to move items for better organization...")
+    
+    -- Execute each planned move
+    for _, move in ipairs(plan.moves) do
+        print(string.format("\nMoving items from barrel %d to barrel %d", 
+            move.from_barrel, move.to_barrel))
+        print("Reason: " .. move.reason)
+        
+        -- Move to source barrel
+        if sortingTurtle.moveToBarrel(move.from_barrel) then
+            -- Get items from source
+            while turtle.suck() do
+                local item = turtle.getItemDetail()
+                if item then
+                    -- Return to initial position
+                    sortingTurtle.returnToInitial()
+                    
+                    -- Move to destination barrel
+                    if sortingTurtle.moveToBarrel(move.to_barrel) then
+                        turtle.drop()
+                        -- Update barrel memory
+                        sortingTurtle.updateBarrelMemory(move.to_barrel, item.name, item.displayName)
+                    end
+                    
+                    sortingTurtle.returnToInitial()
+                end
+            end
+        end
+    end
+    
+    print("\nReorganization complete!")
+    -- Trigger a rescan to update barrel contents
+    sortingTurtle.scanBarrels()
+end
+
 -- Main loop
 print("=== Smart Sorting Turtle v2.9 ===")
 print("Loading barrel memory...")
@@ -1190,9 +1237,17 @@ print("Waiting for items in input storage...")
 local lastCheckTime = 0
 local IDLE_CHECK_INTERVAL = 2  -- Check for items every 2 seconds when idle
 local SCAN_COOLDOWN = 300     -- Minimum time between barrel rescans (5 minutes)
+local lastReorganizeTime = 0
 
 while true do
     local currentTime = os.epoch("local")
+    
+    -- Check if we should consider reorganization (every hour)
+    if currentTime - lastReorganizeTime > 3600 then
+        print("\nChecking if storage needs reorganization...")
+        sortingTurtle.reorganize()
+        lastReorganizeTime = currentTime
+    end
     
     -- Check if there are items to sort
     if sortingTurtle.hasItemsInStorage() then
