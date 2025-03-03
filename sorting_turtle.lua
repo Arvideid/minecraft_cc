@@ -95,31 +95,36 @@ function sortingTurtle.readBarrel()
     -- Save current selected slot
     local currentSlot = turtle.getSelectedSlot()
     
-    -- Try to read all items
-    while true do
-        if turtle.suck() then
-            local item = turtle.getItemDetail()
-            if item then
-                contents.isEmpty = false
-                -- Add item to contents if not already present
-                local found = false
-                for _, existingItem in ipairs(contents.items) do
-                    if existingItem.name == item.name then
-                        found = true
-                        break
-                    end
-                end
-                if not found then
-                    table.insert(contents.items, {
-                        name = item.name,
-                        displayName = item.displayName or item.name
-                    })
+    -- Try to suck all items into turtle's inventory
+    while turtle.suck() do end
+    
+    -- Check each slot in turtle's inventory
+    for slot = 1, 16 do
+        local item = turtle.getItemDetail(slot)
+        if item then
+            contents.isEmpty = false
+            -- Add item to contents if not already present
+            local found = false
+            for _, existingItem in ipairs(contents.items) do
+                if existingItem.name == item.name then
+                    found = true
+                    break
                 end
             end
-            -- Put the item back
+            if not found then
+                table.insert(contents.items, {
+                    name = item.name,
+                    displayName = item.displayName or item.name
+                })
+            end
+        end
+    end
+    
+    -- Return all items to the barrel
+    for slot = 1, 16 do
+        if turtle.getItemCount(slot) > 0 then
+            turtle.select(slot)
             turtle.drop()
-        else
-            break  -- No more items to check
         end
     end
     
