@@ -1184,9 +1184,6 @@ function sortingTurtle.scanBarrels()
     sortingTurtle.numBarrels = 0
     local steps = 0
     
-    -- Clear movement history at start of scan
-    sortingTurtle.moveHistory = {}
-    
     -- Check fuel before starting
     if not sortingTurtle.checkFuel() then
         print("Cannot scan: Insufficient fuel!")
@@ -1196,13 +1193,11 @@ function sortingTurtle.scanBarrels()
     -- Turn left to face the path (no need to back away)
     while sortingTurtle.position.facing ~= 3 do  -- 3 is west (left)
         turtle.turnLeft()
-        sortingTurtle.addToHistory("turnLeft")
         sortingTurtle.updatePosition("turnLeft")
     end
     
     -- Move forward one step to be in line with the barrels
     if turtle.forward() then
-        sortingTurtle.addToHistory("forward")
         sortingTurtle.updatePosition("forward")
     else
         print("Cannot move forward to start scanning!")
@@ -1214,7 +1209,6 @@ function sortingTurtle.scanBarrels()
     while steps < sortingTurtle.config.MAX_STEPS do
         -- Turn right to face potential barrel
         turtle.turnRight()
-        sortingTurtle.addToHistory("turnRight")
         sortingTurtle.updatePosition("turnRight")
         
         -- Check for barrel
@@ -1240,12 +1234,10 @@ function sortingTurtle.scanBarrels()
         
         -- Turn back to face the path
         turtle.turnLeft()
-        sortingTurtle.addToHistory("turnLeft")
         sortingTurtle.updatePosition("turnLeft")
         
         -- Try to move forward
         if turtle.forward() then
-            sortingTurtle.addToHistory("forward")
             sortingTurtle.updatePosition("forward")
             steps = steps + 1
         else
@@ -1253,8 +1245,10 @@ function sortingTurtle.scanBarrels()
         end
     end
     
-    -- Return to initial position using movement history
-    sortingTurtle.returnToInitial()
+    -- Return to initial position directly using returnToInitial
+    if not sortingTurtle.returnToInitial() then
+        print("Warning: Could not return to exact initial position!")
+    end
     
     -- Print barrel summary
     if sortingTurtle.numBarrels > 0 then
