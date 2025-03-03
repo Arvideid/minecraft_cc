@@ -180,59 +180,8 @@ function sortingTurtle.getItemCategory(itemName)
     local modPrefix, baseName = itemName:match("^([^:]+):(.+)$")
     if not modPrefix then return "unknown" end
     
-    -- Special handling for vanilla minecraft items
-    if modPrefix == "minecraft" then
-        -- Define more specific vanilla categories with related items
-        local vanillaCategories = {
-            building_blocks = {"stone", "dirt", "grass", "podzol", "sand", "gravel", "log", "plank", "brick", "concrete"},
-            ores_minerals = {"ore", "ingot", "raw_", "diamond", "emerald", "coal", "redstone", "lapis", "quartz"},
-            nature = {"sapling", "leaves", "flower", "grass", "vine", "lily", "mushroom", "seed", "wheat"},
-            redstone = {"redstone", "repeater", "comparator", "piston", "observer", "hopper"},
-            mechanisms = {"dispenser", "dropper", "observer", "piston", "hopper", "rail"},
-            decoration = {"torch", "lantern", "chain", "glass", "carpet", "bed", "painting"},
-            tools = {"pickaxe", "axe", "shovel", "hoe", "shears", "fishing"},
-            combat = {"sword", "bow", "arrow", "shield", "armor", "helmet", "chestplate", "leggings", "boots"},
-            food = {"apple", "bread", "cookie", "potato", "carrot", "beef", "pork", "chicken", "fish"},
-            brewing = {"potion", "splash", "lingering", "brewing", "blaze", "netherwart"},
-            materials = {"stick", "string", "leather", "feather", "gunpowder", "bone", "paper", "book"},
-            storage = {"chest", "barrel", "shulker", "hopper", "dispenser", "dropper"}
-        }
-        
-        for category, keywords in pairs(vanillaCategories) do
-            for _, keyword in ipairs(keywords) do
-                if baseName:find(keyword) then
-                    return "minecraft_" .. category
-                end
-            end
-        end
-        return "minecraft_misc"
-    end
-    
-    -- For modded items, return mod name and attempt to categorize the item type
-    local modCategories = {
-        machine = {"machine", "generator", "furnace", "crafter", "processor", "smelter"},
-        storage = {"chest", "barrel", "tank", "cell", "storage", "drawer"},
-        tool = {"tool", "hammer", "wrench", "screwdriver", "saw", "cutter"},
-        resource = {"ingot", "gear", "plate", "rod", "dust", "nugget", "gem"},
-        pipe = {"pipe", "conduit", "cable", "duct", "wire", "tube"},
-        crafting = {"table", "bench", "station", "crafter", "workbench"},
-        power = {"energy", "power", "flux", "fe", "rf", "generator"},
-    }
-    
-    -- Try to determine item subcategory
-    local itemType = "misc"
-    for category, keywords in pairs(modCategories) do
-        for _, keyword in ipairs(keywords) do
-            if baseName:find(keyword) then
-                itemType = category
-                break
-            end
-        end
-        if itemType ~= "misc" then break end
-    end
-    
-    -- Return both mod name and item type
-    return modPrefix .. "_" .. itemType
+    -- Just return the mod prefix and base name for the LLM to handle categorization
+    return modPrefix .. "_" .. baseName
 end
 
 -- Function to check and maintain fuel levels
@@ -716,26 +665,23 @@ function sortingTurtle.analyzeBulkBarrels()
     -- Create a structured analysis prompt
     local prompt = string.format([[
 You are a Minecraft storage system analyzer. Your task is to analyze this storage system and output a STRICT JSON response.
-Focus on organizing items by their practical use and material type, not by mods.
+Focus on organizing items by their logical relationships, crafting connections, and gameplay usage.
 
 Current Storage System:
 %s
 
-Organization Rules:
-1. Group similar items together regardless of mod source (e.g., all wood types together, all metals together)
-2. Consider item function over source (e.g., all storage blocks together, all tools together)
-3. Group by material type (e.g., wood, stone, metal, organic)
-4. Consider crafting relationships (e.g., raw materials with their processed forms)
+Analysis Guidelines:
+1. Group items based on their natural relationships and common usage
+2. Consider crafting recipes and how items are used together in-game
+3. Look for patterns in existing barrel contents
+4. Think about what players would logically look for together
 
-Common Groups Examples:
-- Woods: logs, planks, sticks (from any mod)
-- Metals: ingots, nuggets, blocks, raw ores
-- Building: stone, bricks, glass, concrete
-- Tools: all tools regardless of material
-- Storage: chests, barrels, crates
-- Farm: seeds, crops, food
-- Tech: machine parts, circuits
-- Magic: magical ingredients, crystals
+Example Relationships (but don't limit yourself to these):
+- Building materials that are commonly used together
+- Items that are part of the same crafting chain
+- Items used for similar purposes in-game
+- Blocks with similar textures or materials
+- Items from the same game mechanic or feature
 
 Response Format:
 You MUST return a valid JSON array in this EXACT format:
@@ -743,8 +689,7 @@ You MUST return a valid JSON array in this EXACT format:
   {
     "barrel": 1,
     "purpose": "Brief purpose description",
-    "suggested_items": ["item type 1", "item type 2"],
-    "category": "material_type"
+    "suggested_items": ["item type 1", "item type 2"]
   }
 ]
 
@@ -752,7 +697,6 @@ Requirements:
 - "barrel" must be a number from 1 to %d
 - "purpose" must be a single line describing the barrel's contents and theme
 - "suggested_items" must list similar items that would fit well
-- "category" must be one of: wood, metal, stone, organic, tool, machine, storage, magic, misc
 - Response must be valid JSON
 - Include ALL barrels
 - No explanation text, ONLY the JSON array
@@ -767,8 +711,7 @@ Requirements:
                 if analysis.barrel and analysis.purpose then
                     sortingTurtle.barrels[analysis.barrel].analysis = {
                         purpose = analysis.purpose,
-                        suggested_items = analysis.suggested_items,
-                        category = analysis.category
+                        suggested_items = analysis.suggested_items
                     }
                 end
             end
@@ -904,7 +847,6 @@ function sortingTurtle.getBarrelSlot(itemName)
         end
         if barrel.analysis then
             barrelContext = barrelContext .. string.format("\nPurpose: %s", barrel.analysis.purpose)
-            barrelContext = barrelContext .. string.format("\nCategory: %s", barrel.analysis.category)
         end
     end
     
@@ -914,7 +856,7 @@ function sortingTurtle.getBarrelSlot(itemName)
     -- Construct a structured prompt
     local prompt = string.format([[
 You are a Minecraft item sorter. Your task is to determine the best barrel for storing an item.
-Focus on the item's material and function, not its mod source.
+Focus on logical relationships between items, not just their names or mods.
 
 Item to Store: %s
 Base Name: %s
@@ -922,18 +864,24 @@ Base Name: %s
 Current Storage System:
 %s
 
-Selection Rules (in priority order):
-1. EXACT MATCH: If a barrel already contains this exact item
-2. MATERIAL MATCH: If a barrel contains items of the same material type (e.g., wood with wood)
-3. FUNCTION MATCH: If a barrel contains items with similar function (e.g., tools with tools)
-4. EMPTY BARREL: If no good matches exist
+Selection Guidelines:
+1. Look for barrels containing items that are:
+   - Used together in crafting
+   - Used together in building
+   - Part of the same game mechanic
+   - Similar in material or texture
+   - Related by function or purpose
+2. Consider gameplay relationships:
+   - Building blocks that players use together
+   - Items that are part of the same crafting chain
+   - Items used for similar purposes
+3. If no good match exists, prefer empty barrels
 
-Special Grouping Rules:
-- All wood types (logs, planks, sticks) should go together
-- All metal types (ingots, nuggets, ores) should go together
-- All tools of similar function should go together
-- All storage blocks should go together
-- All crops and food should go together
+Examples of good matches:
+- Stone variants (stone, andesite, granite, diorite) belong together
+- All wood types and their products belong together
+- Related crafting materials belong together
+- Tools with similar functions belong together
 
 Response Format:
 You MUST return ONLY a single number between 1 and %d.
