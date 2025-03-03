@@ -1381,25 +1381,51 @@ function sortingTurtle.scanBarrels()
 end
 
 -- Function to check if there are items in the input storage
-function sortingTurtle.hasItemsInStorage()
-    -- First check if we're facing valid storage
-    if not sortingTurtle.isValidInputStorage() then
+function sortingTurtle.checkInputStorage()
+    -- Make sure we're facing the right direction (north)
+    while sortingTurtle.position.facing ~= 0 do
+        turtle.turnLeft()
+        sortingTurtle.position.facing = (sortingTurtle.position.facing - 1) % 4
+    end
+    
+    -- Check if we're facing valid storage
+    local success, data = turtle.inspect()
+    if not success or not data then
+        print("No storage block detected in front!")
         return false
     end
     
-    -- Try to suck an item (and put it back if found)
+    -- Verify it's a valid storage block
+    if not (data.name == "minecraft:chest" or 
+            data.name == "minecraft:barrel" or 
+            data.name:find("chest") or 
+            data.name:find("barrel") or 
+            data.name:find("storage")) then
+        print("Invalid storage block detected: " .. (data.name or "unknown"))
+        return false
+    end
+    
+    -- Try to detect items
+    local hasItems = false
+    local currentSlot = turtle.getSelectedSlot()
+    
+    -- Try each slot until we find an item
     for slot = 1, 16 do
-        if turtle.suck() then
+        turtle.select(slot)
+        if turtle.suck(1) then  -- Try to grab just one item
             turtle.drop()  -- Put it back immediately
-            return true
+            hasItems = true
+            break
         end
     end
     
-    return false
+    -- Restore original slot
+    turtle.select(currentSlot)
+    return hasItems
 end
 
 -- Main loop
-print("=== Smart Sorting Turtle v3.1 ===")
+print("=== Smart Sorting Turtle v3.2 ===")
 print("Setup Instructions:")
 print("1. Place input storage (chest or barrel)")
 print("2. Place sorting barrels in rows to the left of the input storage")
@@ -1412,67 +1438,72 @@ print("Level 1:  [B][B][B]...")
 print("Level 0:  [S][B][B][B]...")
 print("          [T]")
 print("Where: T=Turtle (facing up), S=Input Storage, B=Sorting Barrels")
-print("The turtle will scan and use all accessible barrels")
 
-print("\nWaiting for items in input storage...")
-print("First item detection will trigger initial barrel scan")
-
-local lastCheckTime = 0
-local IDLE_CHECK_INTERVAL = 2  -- Check for items every 2 seconds when idle
+-- Initialize state
+local lastCheckTime = os.epoch("local")
+local lastMessageTime = lastCheckTime
+local IDLE_CHECK_INTERVAL = 2  -- Check for items every 2 seconds
+local MESSAGE_INTERVAL = 30    -- Show waiting message every 30 seconds
 local hasScanned = false
 
+-- Main processing loop
 while true do
     local currentTime = os.epoch("local")
     
-    -- Check if there are items to sort
-    if sortingTurtle.hasItemsInStorage() then
-        -- If this is our first item detection, do initial setup
+    -- Check for items in input storage
+    if sortingTurtle.checkInputStorage() then
+        -- First-time setup
         if not hasScanned then
-            print("\nFirst items detected! Performing initial barrel scan...")
+            print("\nFirst items detected! Performing initial scan...")
             sortingTurtle.scanBarrels()
+            
             if sortingTurtle.numBarrels == 0 then
                 print("Error: No barrels found during scan!")
                 print("Please check barrel setup and restart the program.")
                 break
             end
-            hasScanned = true
             
-            -- After first scan, do an initial resort to organize existing items
+            hasScanned = true
             print("\nPerforming initial resort of existing items...")
             sortingTurtle.resort()
-        else
-            print("\nDetected items in storage!")
-            -- Only rescan if it's been a while since last scan
-            if currentTime - sortingTurtle.lastScanTime > sortingTurtle.config.SCAN_INTERVAL then
-                print("Rescanning barrels for changes...")
-                sortingTurtle.scanBarrels()
-                if sortingTurtle.numBarrels == 0 then
-                    print("Error: No barrels found during scan!")
-                    print("Please check barrel setup and restart the program.")
-                    break
-                end
-                
-                -- After rescan, resort items to handle any category changes
-                print("\nResorting items after scan...")
-                sortingTurtle.resort()
-            end
         end
         
-        -- Sort the new items from input storage
+        -- Regular operation
+        print("\nProcessing items from input storage...")
+        
+        -- Check if we need to rescan
+        if currentTime - sortingTurtle.lastScanTime > sortingTurtle.config.SCAN_INTERVAL then
+            print("Performing periodic barrel rescan...")
+            sortingTurtle.scanBarrels()
+            
+            if sortingTurtle.numBarrels == 0 then
+                print("Error: Lost connection to barrels!")
+                print("Please check barrel setup and restart the program.")
+                break
+            end
+            
+            print("\nResorting items after scan...")
+            sortingTurtle.resort()
+        end
+        
+        -- Sort new items
         sortingTurtle.sortItems()
-        print("\nWaiting for more items...")
         lastCheckTime = currentTime
+        lastMessageTime = currentTime
+        
     else
-        -- If we haven't checked recently, update the idle message
-        if currentTime - lastCheckTime > 30 then  -- Show message every 30 seconds
+        -- Show periodic waiting message
+        if currentTime - lastMessageTime >= MESSAGE_INTERVAL then
             if not hasScanned then
                 print("Waiting for first items... (Press Ctrl+T to exit)")
             else
                 print("Waiting for more items... (Press Ctrl+T to exit)")
             end
-            lastCheckTime = currentTime
+            lastMessageTime = currentTime
         end
-        os.sleep(IDLE_CHECK_INTERVAL)  -- Wait before checking again
+        
+        -- Wait before next check
+        os.sleep(IDLE_CHECK_INTERVAL)
     end
 end
 
