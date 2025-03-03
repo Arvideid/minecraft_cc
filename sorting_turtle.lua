@@ -32,6 +32,13 @@ sortingTurtle.barrelAssignments = {}  -- Will store barrel -> category mappings
 -- Add after sortingTurtle initialization
 sortingTurtle.problematicItems = {}  -- Track items that couldn't be sorted
 
+-- Add barrel layout configuration
+sortingTurtle.layout = {
+    maxHorizontalSteps = 16,  -- Maximum horizontal steps to search
+    maxVerticalSteps = 3,     -- Maximum vertical levels to search
+    currentLevel = 0          -- Current vertical level being scanned
+}
+
 -- Function to add movement to history
 function sortingTurtle.addToHistory(movement)
     table.insert(sortingTurtle.moveHistory, movement)
@@ -560,6 +567,12 @@ end
 
 -- Function to move to a specific barrel position
 function sortingTurtle.moveToBarrel(barrelNumber)
+    local barrel = sortingTurtle.barrels[barrelNumber]
+    if not barrel then
+        print("Invalid barrel number!")
+        return false
+    end
+    
     -- Turn left to face the barrels if not already facing them
     while sortingTurtle.position.facing ~= 3 do  -- 3 is west (left)
         turtle.turnLeft()
@@ -575,11 +588,11 @@ function sortingTurtle.moveToBarrel(barrelNumber)
     sortingTurtle.addToHistory("forward")
     sortingTurtle.updatePosition("forward")
     
-    -- Move to position in front of the target barrel
-    local stepsNeeded = sortingTurtle.barrels[barrelNumber].position
+    -- First move horizontally to the correct position
+    local horizontalSteps = barrel.position
     local currentStep = 0
     
-    while currentStep < stepsNeeded do
+    while currentStep < horizontalSteps do
         if turtle.forward() then
             sortingTurtle.addToHistory("forward")
             sortingTurtle.updatePosition("forward")
@@ -588,7 +601,31 @@ function sortingTurtle.moveToBarrel(barrelNumber)
             return false
         end
     end
-
+    
+    -- Then move vertically to the correct level
+    local targetLevel = barrel.level or 0
+    local currentLevel = sortingTurtle.position.y
+    
+    -- Move up or down as needed
+    while currentLevel < targetLevel do
+        if turtle.up() then
+            sortingTurtle.addToHistory("up")
+            sortingTurtle.updatePosition("up")
+            currentLevel = currentLevel + 1
+        else
+            return false
+        end
+    end
+    while currentLevel > targetLevel do
+        if turtle.down() then
+            sortingTurtle.addToHistory("down")
+            sortingTurtle.updatePosition("down")
+            currentLevel = currentLevel - 1
+        else
+            return false
+        end
+    end
+    
     -- Turn right to face the barrel
     turtle.turnRight()
     sortingTurtle.addToHistory("turnRight")
@@ -1153,12 +1190,11 @@ function sortingTurtle.hasItemsInStorage()
     return false
 end
 
--- Optimized scan function that only scans in the direction of barrels
+-- Optimized scan function that scans both horizontally and vertically
 function sortingTurtle.scanBarrels()
     print("\n=== Starting Barrel Scan ===")
     sortingTurtle.barrels = {}
     sortingTurtle.numBarrels = 0
-    local steps = 0
     
     -- Clear movement history at start of scan
     sortingTurtle.moveHistory = {}
@@ -1169,14 +1205,14 @@ function sortingTurtle.scanBarrels()
         return
     end
     
-    -- Turn left to face the path (no need to back away)
+    -- Turn left to face the path (west)
     while sortingTurtle.position.facing ~= 3 do  -- 3 is west (left)
         turtle.turnLeft()
         sortingTurtle.addToHistory("turnLeft")
         sortingTurtle.updatePosition("turnLeft")
     end
     
-    -- Move forward one step to be in line with the barrels
+    -- Move forward one step to be in line with barrels
     if turtle.forward() then
         sortingTurtle.addToHistory("forward")
         sortingTurtle.updatePosition("forward")
@@ -1185,58 +1221,87 @@ function sortingTurtle.scanBarrels()
         return
     end
     
-    -- Single pass: Move and scan barrels
-    print("Scanning for barrels...")
-    while steps < sortingTurtle.config.MAX_STEPS do
-        -- Turn right to face potential barrel
-        turtle.turnRight()
-        sortingTurtle.addToHistory("turnRight")
-        sortingTurtle.updatePosition("turnRight")
+    -- Scan each vertical level
+    for level = 0, sortingTurtle.layout.maxVerticalSteps - 1 do
+        local horizontalSteps = 0
+        sortingTurtle.layout.currentLevel = level
         
-        -- Check for barrel
-        local success, data = turtle.inspect()
-        if success and data then
-            if string.find(data.name or "", "barrel") or string.find(data.name or "", "storage") then
-                -- Read barrel contents immediately
-                local contents = sortingTurtle.readBarrel()
-                local barrelInfo = {
-                    position = steps,
-                    contents = contents,
-                    blockData = data
-                }
-                
-                table.insert(sortingTurtle.barrels, barrelInfo)
-                sortingTurtle.numBarrels = sortingTurtle.numBarrels + 1
-                
-                -- Print basic barrel info
-                print(string.format("\nFound barrel %d:", sortingTurtle.numBarrels))
-                print(string.format("- Contents: %s", contents.isEmpty and "EMPTY" or "Items present"))
+        print(string.format("\nScanning level %d...", level))
+        
+        -- Scan horizontally on current level
+        while horizontalSteps < sortingTurtle.layout.maxHorizontalSteps do
+            -- Turn right to face potential barrel
+            turtle.turnRight()
+            sortingTurtle.addToHistory("turnRight")
+            sortingTurtle.updatePosition("turnRight")
+            
+            -- Check for barrel
+            local success, data = turtle.inspect()
+            if success and data then
+                if string.find(data.name or "", "barrel") or string.find(data.name or "", "storage") then
+                    -- Read barrel contents immediately
+                    local contents = sortingTurtle.readBarrel()
+                    local barrelInfo = {
+                        position = horizontalSteps,
+                        level = level,
+                        contents = contents,
+                        blockData = data
+                    }
+                    
+                    table.insert(sortingTurtle.barrels, barrelInfo)
+                    sortingTurtle.numBarrels = sortingTurtle.numBarrels + 1
+                    
+                    -- Print basic barrel info
+                    print(string.format("\nFound barrel %d:", sortingTurtle.numBarrels))
+                    print(string.format("- Position: Level %d, Step %d", level, horizontalSteps))
+                    print(string.format("- Contents: %s", contents.isEmpty and "EMPTY" or "Items present"))
+                end
+            end
+            
+            -- Turn back to face the path
+            turtle.turnLeft()
+            sortingTurtle.addToHistory("turnLeft")
+            sortingTurtle.updatePosition("turnLeft")
+            
+            -- Try to move forward
+            if turtle.forward() then
+                sortingTurtle.addToHistory("forward")
+                sortingTurtle.updatePosition("forward")
+                horizontalSteps = horizontalSteps + 1
+            else
+                break
             end
         end
         
-        -- Turn back to face the path
-        turtle.turnLeft()
-        sortingTurtle.addToHistory("turnLeft")
-        sortingTurtle.updatePosition("turnLeft")
+        -- Return to start of current row
+        while horizontalSteps > 0 do
+            turtle.back()
+            sortingTurtle.addToHistory("back")
+            sortingTurtle.updatePosition("back")
+            horizontalSteps = horizontalSteps - 1
+        end
         
-        -- Try to move forward
-        if turtle.forward() then
-            sortingTurtle.addToHistory("forward")
-            sortingTurtle.updatePosition("forward")
-            steps = steps + 1
-        else
-            break
+        -- If not at last level, move up for next scan
+        if level < sortingTurtle.layout.maxVerticalSteps - 1 then
+            if turtle.up() then
+                sortingTurtle.addToHistory("up")
+                sortingTurtle.updatePosition("up")
+            else
+                print(string.format("Cannot move up to level %d!", level + 1))
+                break
+            end
         end
     end
     
-    -- Return to initial position using movement history
+    -- Return to initial position
     sortingTurtle.returnToInitial()
     
     -- Print barrel summary
     if sortingTurtle.numBarrels > 0 then
-        print(string.format("\nFound %d barrels", sortingTurtle.numBarrels))
+        print(string.format("\nFound %d barrels across %d levels", 
+            sortingTurtle.numBarrels, sortingTurtle.layout.currentLevel + 1))
         
-        -- Define categories if this is the first scan (categories table is empty)
+        -- Define categories if this is the first scan
         if next(sortingTurtle.categories) == nil then
             print("\nDefining storage categories...")
             if sortingTurtle.defineCategories() then
@@ -1266,16 +1331,20 @@ function sortingTurtle.scanBarrels()
 end
 
 -- Main loop
-print("=== Smart Sorting Turtle v2.9 ===")
+print("=== Smart Sorting Turtle v3.0 ===")
 print("Setup Instructions:")
 print("1. Place input storage (chest or barrel)")
-print("2. Place sorting barrels in a line to the left of the input storage")
-print("3. Place turtle directly behind the input storage, facing it")
-print("4. Ensure all barrels are accessible")
-print("\nLayout should look like this:")
-print("[S][B][B][B]...")
-print("[T]")
+print("2. Place sorting barrels in rows to the left of the input storage")
+print("3. You can stack barrels vertically (up to 3 levels high)")
+print("4. Place turtle directly behind the input storage, facing it")
+print("5. Ensure all barrels are accessible")
+print("\nLayout can look like this:")
+print("Level 2:  [B][B][B]...")
+print("Level 1:  [B][B][B]...")
+print("Level 0:  [S][B][B][B]...")
+print("          [T]")
 print("Where: T=Turtle (facing up), S=Input Storage, B=Sorting Barrels")
+print("The turtle will scan and use all accessible barrels")
 
 -- Do initial barrel scan
 print("\nPerforming initial barrel scan...")
