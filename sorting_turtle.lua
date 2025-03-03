@@ -886,11 +886,18 @@ function sortingTurtle.getBarrelSlot(itemName, itemCategory)
     local barrelContext = "Current barrel setup:\n"
     for i, barrel in ipairs(sortingTurtle.barrels) do
         local contents = barrel.contents
-        local status = contents.name == "empty" and "EMPTY" or 
-                      string.format("Contains: %s (Type: %s, Category: %s)", 
-                          contents.displayName,
-                          contents.name,
-                          contents.category)
+        local status = #contents.items == 0 and "EMPTY" or "Contains:"
+        
+        -- List all items in the barrel
+        if #contents.items > 0 then
+            for _, item in ipairs(contents.items) do
+                status = status .. string.format("\n- %s x%d (%s)", 
+                    item.displayName or item.name,
+                    item.count,
+                    item.category)
+            end
+        end
+        
         -- Add barrel analysis if available
         if barrel.analysis then
             status = status .. string.format("\nPurpose: %s", barrel.analysis)
@@ -947,12 +954,16 @@ Selected Barrel Number:]],
         local barrelSlot = tonumber(response)
         if barrelSlot and barrelSlot >= 1 and barrelSlot <= sortingTurtle.numBarrels then
             return barrelSlot
-        else
-            print("Invalid barrel number from LLM: " .. (response or "nil"))
         end
-    else
-        print("No response received from LLM.")
     end
+    
+    -- If no valid response, try to find first empty barrel
+    for i, barrel in ipairs(sortingTurtle.barrels) do
+        if #barrel.contents.items == 0 then
+            return i
+        end
+    end
+    
     return nil
 end
 
