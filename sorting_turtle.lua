@@ -127,16 +127,16 @@ function sortingTurtle.readBarrel()
         -- Second phase: Scan our inventory for unique items
         for slot = 1, 16 do
             local item = turtle.getItemDetail(slot)
-            if item then
+        if item then
                 -- Check if we already have this item type recorded
                 local found = false
                 for _, existingItem in ipairs(contents.items) do
                     if existingItem.name == item.name then
                         found = true
                         break
-                    end
-                end
-                
+        end
+    end
+    
                 -- If it's a new item type, add it to our list
                 if not found then
                     table.insert(contents.items, {
@@ -663,9 +663,9 @@ function sortingTurtle.analyzeBulkBarrels()
             for _, item in ipairs(barrel.contents.items) do
                 barrelContext = barrelContext .. string.format("\n- %s", item.displayName)
             end
+            end
         end
-    end
-    
+        
     -- Create a structured analysis prompt
     local prompt = string.format([[
 You are a Minecraft storage system analyzer. Your task is to analyze this storage system and output a STRICT JSON response.
@@ -731,30 +731,10 @@ end
 -- Function to define categories (called only once during initial scan)
 function sortingTurtle.defineCategories()
     local prompt = [[
-Define basic Minecraft storage categories. Return ONLY a simple JSON array in this format:
-[
-  {
-    "name": "building",
-    "items": ["stone", "wood", "glass"]
-  },
-  {
-    "name": "resources",
-    "items": ["iron", "gold", "diamond"]
-  }
-]
-
-Use these category names ONLY:
-- building (blocks and construction materials)
-- resources (raw materials and minerals)
-- tools (tools and equipment)
-- combat (weapons and armor)
-- redstone (redstone components)
-- farming (food and agricultural items)
-- decoration (decorative items)
-- storage (chests and containers)
-- misc (miscellaneous items)
-
-Keep the response minimal and consistent. NO explanation text, ONLY the JSON array.]]
+You are a Minecraft item categorizer. Look at each barrel's contents and assign ONE simple category name.
+Use short, simple categories like: wood, stone, ores, metals, tools, redstone, create, food, etc.
+Return ONLY the category name, nothing else.
+For example, if a barrel has wooden items, just return: wood]]
 
     print("Requesting categories...")
     local response = llm.getGeminiResponse(prompt)
@@ -764,26 +744,12 @@ Keep the response minimal and consistent. NO explanation text, ONLY the JSON arr
         return false
     end
     
-    -- Try to parse the response
-    local success, parsed = pcall(textutils.unserializeJSON, response)
-    if not success then
-        print("Error: Failed to parse response")
-        return false
-    end
+    -- Clean up the response (remove any quotes, spaces, newlines)
+    response = response:gsub('"', ''):gsub("^%s*(.-)%s*$", "%1"):gsub("\n", "")
     
-    -- Validate the basic structure
-    if type(parsed) ~= "table" then
-        print("Error: Response is not a table")
-        return false
-    end
-    
-    -- Store the categories
-    sortingTurtle.categories = parsed
-    print("Categories defined:")
-    for _, cat in ipairs(parsed) do
-        print("- " .. cat.name)
-    end
-    
+    -- Store the simple category
+    sortingTurtle.categories = {response}
+    print("Category defined: " .. response)
     return true
 end
 
@@ -791,65 +757,58 @@ end
 function sortingTurtle.assignBarrelCategories()
     if sortingTurtle.numBarrels == 0 then return false end
     
-    -- Create context of current barrel contents
-    local barrelContext = "Current barrel contents:\n"
+    -- Create simple context of barrel contents
+    local barrelContext = "Barrel contents:\n"
     for i, barrel in ipairs(sortingTurtle.barrels) do
-        barrelContext = barrelContext .. string.format("\nBarrel %d:", i)
+        barrelContext = barrelContext .. string.format("\nBarrel %d: ", i)
         if barrel.contents.isEmpty then
-            barrelContext = barrelContext .. " EMPTY"
+            barrelContext = barrelContext .. "EMPTY"
         else
-            barrelContext = barrelContext .. "\nContains:"
             for _, item in ipairs(barrel.contents.items) do
-                barrelContext = barrelContext .. string.format("\n- %s", item.displayName)
+                barrelContext = barrelContext .. item.displayName .. ", "
             end
         end
     end
     
-    -- Create assignment prompt
     local prompt = string.format([[
-Assign each barrel to one of the defined categories. Consider current contents and optimal organization.
+Look at these Minecraft barrel contents and assign ONE simple category name to each barrel.
+Use short, simple categories like: wood, stone, ores, metals, tools, redstone, create, food, etc.
+Return ONLY the category name for each barrel, one per line.
 
-Categories:
 %s
 
-Barrel State:
-%s
+Example response format:
+wood
+stone
+ores
+]], barrelContext)
 
-Return a JSON array in this EXACT format:
-[
-  {
-    "barrel": 1,
-    "category": "category_name"
-  }
-]
-
-Rules:
-1. Each barrel must be assigned to an existing category
-2. Distribute categories logically based on current contents
-3. For empty barrels, assign based on optimal organization
-4. Ensure even distribution of categories when possible]], 
-        textutils.serialize(sortingTurtle.categories),
-        barrelContext)
-    
     local response = llm.getGeminiResponse(prompt)
-    if response then
-        local success, assignments = pcall(textutils.unserializeJSON, response)
-        if success and assignments then
-            -- Clear existing assignments
-            sortingTurtle.barrelAssignments = {}
-            
-            -- Apply new assignments
-            for _, assignment in ipairs(assignments) do
-                if assignment.barrel and assignment.category then
-                    sortingTurtle.barrelAssignments[assignment.barrel] = assignment.category
-                    print(string.format("Barrel %d assigned to category: %s", 
-                        assignment.barrel, assignment.category))
-                end
-            end
-            return true
+    if not response then
+        print("Error: No category assignments received")
+        return false
+    end
+    
+    -- Split response into lines and assign categories
+    local categories = {}
+    for line in response:gmatch("[^\r\n]+") do
+        -- Clean up each line (remove spaces, quotes)
+        line = line:gsub('"', ''):gsub("^%s*(.-)%s*$", "%1")
+        table.insert(categories, line)
+    end
+    
+    -- Clear existing assignments
+    sortingTurtle.barrelAssignments = {}
+    
+    -- Assign categories to barrels
+    for i, category in ipairs(categories) do
+        if i <= sortingTurtle.numBarrels then
+            sortingTurtle.barrelAssignments[i] = category
+            print(string.format("Barrel %d -> %s", i, category))
         end
     end
-    return false
+    
+    return true
 end
 
 -- Enhanced getBarrelSlot function that uses category assignments
@@ -983,9 +942,9 @@ function sortingTurtle.sortItems()
                             sortingTurtle.barrels[barrelSlot].contents = {
                                 items = {
                                     {
-                                        name = itemDetail.name,
+                                name = itemDetail.name,
                                         displayName = itemDetail.displayName
-                                    }
+                            }
                                 },
                                 isEmpty = false
                             }
@@ -1018,9 +977,9 @@ function sortingTurtle.sortItems()
                     hasMoreItems = true
                     turtle.drop() -- Put it back for now
                     break
-                end
-            end
-            
+        end
+    end
+    
             -- If no more items, break the loop
             if not hasMoreItems then
                 break
@@ -1222,7 +1181,7 @@ while true do
         end
         
         -- Sort the items
-        sortingTurtle.sortItems()
+    sortingTurtle.sortItems()
         print("\nWaiting for more items...")
         lastCheckTime = currentTime
     else
