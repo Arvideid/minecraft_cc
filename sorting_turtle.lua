@@ -25,11 +25,9 @@ sortingTurtle.lastScanTime = 0
 sortingTurtle.position = { x = 0, y = 0, z = 0, facing = 0 }  -- 0=north, 1=east, 2=south, 3=west
 sortingTurtle.moveHistory = {}  -- Track movement history
 
--- Simplified barrel memory (runtime only)
-sortingTurtle.barrelMemory = {
-    categories = {},  -- Store categories
-    barrelAssignments = {}  -- Track barrel assignments
-}
+-- Runtime-only category system
+sortingTurtle.categories = {}  -- Will store category definitions
+sortingTurtle.barrelAssignments = {}  -- Will store barrel -> category mappings
 
 -- Function to add movement to history
 function sortingTurtle.addToHistory(movement)
@@ -730,7 +728,7 @@ Requirements:
     return false
 end
 
--- Function to define initial categories
+-- Function to define categories (called only once during initial scan)
 function sortingTurtle.defineCategories()
     local prompt = [[
 Define logical categories for a Minecraft storage system. Consider common item groupings and gameplay patterns.
@@ -761,26 +759,16 @@ Each category should be distinct and clear in its purpose.]]
     if response then
         local success, categories = pcall(textutils.unserializeJSON, response)
         if success and categories then
-            return categories
+            sortingTurtle.categories = categories  -- Store categories globally
+            return true
         end
     end
-    return nil
+    return false
 end
 
 -- Function to assign categories to barrels
 function sortingTurtle.assignBarrelCategories()
-    if sortingTurtle.numBarrels == 0 then return end
-    
-    -- If we don't have categories defined yet, define them
-    if not sortingTurtle.barrelMemory.categories or #sortingTurtle.barrelMemory.categories == 0 then
-        local categories = sortingTurtle.defineCategories()
-        if categories then
-            sortingTurtle.barrelMemory.categories = categories
-        else
-            print("Error: Could not define categories!")
-            return
-        end
-    end
+    if sortingTurtle.numBarrels == 0 then return false end
     
     -- Create context of current barrel contents
     local barrelContext = "Current barrel contents:\n"
@@ -819,7 +807,7 @@ Rules:
 2. Distribute categories logically based on current contents
 3. For empty barrels, assign based on optimal organization
 4. Ensure even distribution of categories when possible]], 
-        textutils.serialize(sortingTurtle.barrelMemory.categories),
+        textutils.serialize(sortingTurtle.categories),
         barrelContext)
     
     local response = llm.getGeminiResponse(prompt)
@@ -827,12 +815,12 @@ Rules:
         local success, assignments = pcall(textutils.unserializeJSON, response)
         if success and assignments then
             -- Clear existing assignments
-            sortingTurtle.barrelMemory.barrelAssignments = {}
+            sortingTurtle.barrelAssignments = {}
             
             -- Apply new assignments
             for _, assignment in ipairs(assignments) do
                 if assignment.barrel and assignment.category then
-                    sortingTurtle.barrelMemory.barrelAssignments[assignment.barrel] = assignment.category
+                    sortingTurtle.barrelAssignments[assignment.barrel] = assignment.category
                     print(string.format("Barrel %d assigned to category: %s", 
                         assignment.barrel, assignment.category))
                 end
@@ -861,7 +849,7 @@ Available Categories:
 Return ONLY the category name that best fits this item.]], 
         itemName,
         itemDisplayName,
-        textutils.serialize(sortingTurtle.barrelMemory.categories))
+        textutils.serialize(sortingTurtle.categories))
     
     local itemCategory = llm.getGeminiResponse(prompt)
     if not itemCategory then return nil end
@@ -870,7 +858,7 @@ Return ONLY the category name that best fits this item.]],
     itemCategory = itemCategory:gsub('"', ''):gsub("^%s*(.-)%s*$", "%1")
     
     -- First, try to find a barrel already assigned to this category that has space
-    for barrelNum, category in pairs(sortingTurtle.barrelMemory.barrelAssignments) do
+    for barrelNum, category in pairs(sortingTurtle.barrelAssignments) do
         if category == itemCategory and not sortingTurtle.barrels[barrelNum].contents.isEmpty then
             -- Check if this barrel already contains similar items
             return barrelNum
@@ -878,7 +866,7 @@ Return ONLY the category name that best fits this item.]],
     end
     
     -- If no existing barrel with items found, try to find an empty barrel assigned to this category
-    for barrelNum, category in pairs(sortingTurtle.barrelMemory.barrelAssignments) do
+    for barrelNum, category in pairs(sortingTurtle.barrelAssignments) do
         if category == itemCategory and sortingTurtle.barrels[barrelNum].contents.isEmpty then
             return barrelNum
         end
@@ -1137,12 +1125,23 @@ function sortingTurtle.scanBarrels()
     if sortingTurtle.numBarrels > 0 then
         print(string.format("\nFound %d barrels", sortingTurtle.numBarrels))
         
+        -- Define categories if this is the first scan (categories table is empty)
+        if next(sortingTurtle.categories) == nil then
+            print("\nDefining storage categories...")
+            if sortingTurtle.defineCategories() then
+                print("Categories defined successfully!")
+            else
+                print("Error: Could not define categories!")
+                return
+            end
+        end
+        
         -- Assign categories to barrels
         print("\nAssigning categories to barrels...")
         if sortingTurtle.assignBarrelCategories() then
             print("Category assignment complete!")
             -- Print category assignments
-            for barrel, category in pairs(sortingTurtle.barrelMemory.barrelAssignments) do
+            for barrel, category in pairs(sortingTurtle.barrelAssignments) do
                 print(string.format("Barrel %d: %s", barrel, category))
             end
         else
