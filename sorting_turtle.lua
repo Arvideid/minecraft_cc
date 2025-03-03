@@ -1016,19 +1016,11 @@ function sortingTurtle.sortItems()
     -- Clear movement history before starting to sort
     sortingTurtle.moveHistory = {}
     
-    -- Check if we need to rescan barrels
-    local currentTime = os.epoch("local")
+    -- Do initial scan if we haven't done one yet
     if sortingTurtle.numBarrels == 0 then
-        -- If no barrels found at all, do an initial scan
         sortingTurtle.scanBarrels()
         if sortingTurtle.numBarrels == 0 then 
-            return 
-        end
-    elseif (currentTime - sortingTurtle.lastScanTime) > sortingTurtle.config.SCAN_INTERVAL then
-        -- Only rescan if enough time has passed since last scan
-        print("Performing periodic barrel scan...")
-        sortingTurtle.scanBarrels()
-        if sortingTurtle.numBarrels == 0 then 
+            print("Error: No barrels found during scan!")
             return 
         end
     end
@@ -1062,7 +1054,7 @@ function sortingTurtle.sortItems()
     -- Process items in the storage
     local itemsMoved = false
     local itemsSorted = 0
-    local itemsSkipped = 0
+    local itemsToUnknown = 0
     
     while true do
         -- Clear movement history before processing each item
@@ -1074,91 +1066,43 @@ function sortingTurtle.sortItems()
         end
         
         local itemDetail = turtle.getItemDetail()
-        if not itemDetail then
-            turtle.drop()
-        else
-            local shouldContinue = false
+        if itemDetail then
+            local itemCategory = sortingTurtle.getItemCategory(itemDetail.name)
+            print(string.format("\nProcessing: %s (Category: %s)", 
+                itemDetail.displayName or itemDetail.name,
+                itemCategory))
             
-            -- Check if this is a known problematic item
-            if sortingTurtle.problematicItems[itemDetail.name] then
-                print(string.format("\nDetected previously problematic item: %s", itemDetail.displayName or itemDetail.name))
-                -- Return item to storage before attempting any updates
-                turtle.drop()
-                -- Try to handle it by rescanning and updating categories
-                if not sortingTurtle.handleProblematicItem(itemDetail.name, itemDetail.displayName) then
-                    print("Still unable to handle this item type")
-                    itemsSkipped = itemsSkipped + 1
-                    shouldContinue = true
-                end
-            end
+            local barrelSlot = sortingTurtle.getBarrelSlot(itemDetail.name, itemDetail.displayName)
+            -- barrelSlot will always be valid now (at minimum it will be 1 for unknown)
             
-            if not shouldContinue then
-                local itemCategory = sortingTurtle.getItemCategory(itemDetail.name)
-                print(string.format("\nProcessing: %s (Category: %s)", 
-                    itemDetail.displayName or itemDetail.name,
-                    itemCategory))
-                
-                local barrelSlot = sortingTurtle.getBarrelSlot(itemDetail.name, itemDetail.displayName)
-                local success = false
-                
-                if barrelSlot and itemCategory ~= "unknown" then
-                    print(string.format("Moving to barrel %d...", barrelSlot))
-                    -- Move to barrel and drop item
-                    if sortingTurtle.moveToBarrel(barrelSlot) then
-                        if turtle.drop() then
-                            itemsMoved = true
-                            itemsSorted = itemsSorted + 1
-                            -- Update barrel contents in memory
-                            sortingTurtle.barrels[barrelSlot].contents = {
-                                items = {{
-                                    name = itemDetail.name,
-                                    displayName = itemDetail.displayName
-                                }},
-                                isEmpty = false
-                            }
-                            print(string.format("Stored in barrel %d", barrelSlot))
-                            success = true
-                        end
-                    end
-                    
-                    if not success then
-                        print("Could not reach barrel, returning item to storage")
-                        itemsSkipped = itemsSkipped + 1
-                    end
-                else
-                    -- Return item to storage before attempting category updates
-                    turtle.drop()
-                    
-                    -- Add item to problematic items list
-                    if not sortingTurtle.problematicItems[itemDetail.name] then
-                        sortingTurtle.problematicItems[itemDetail.name] = {
-                            name = itemDetail.name,
-                            displayName = itemDetail.displayName,
-                            attempts = 1
-                        }
-                        
-                        -- Try to handle it by updating categories
-                        if sortingTurtle.handleProblematicItem(itemDetail.name, itemDetail.displayName) then
-                            -- Try sorting again with new categories on next iteration
-                            print("Categories updated, will try sorting item again in next cycle")
-                        else
-                            print("No suitable barrel found, item will remain in storage")
-                            itemsSkipped = itemsSkipped + 1
-                        end
+            print(string.format("Moving to barrel %d...", barrelSlot))
+            -- Move to barrel and drop item
+            if sortingTurtle.moveToBarrel(barrelSlot) then
+                if turtle.drop() then
+                    itemsMoved = true
+                    if barrelSlot == 1 then
+                        itemsToUnknown = itemsToUnknown + 1
                     else
-                        print("No suitable barrel found, returning item to storage")
-                        itemsSkipped = itemsSkipped + 1
+                        itemsSorted = itemsSorted + 1
+                    end
+                    print(string.format("Stored in barrel %d", barrelSlot))
+                else
+                    print("Warning: Could not store item in barrel!")
+                    -- If we can't store in target barrel, use unknown barrel
+                    sortingTurtle.returnToInitial()
+                    if sortingTurtle.moveToBarrel(1) then
+                        if turtle.drop() then
+                            itemsToUnknown = itemsToUnknown + 1
+                            print("Stored in unknown barrel")
+                        else
+                            print("Error: Could not store in unknown barrel!")
+                        end
                     end
                 end
-                
-                -- Return to initial position using movement history
-                sortingTurtle.returnToInitial()
-                
-                -- Drop item back in storage if it wasn't stored
-                if not success then
-                    turtle.drop()
-                end
             end
+            
+            -- Return to initial position using movement history
+            sortingTurtle.returnToInitial()
         end
         
         -- Check if there are more items to process
@@ -1180,8 +1124,8 @@ function sortingTurtle.sortItems()
     -- Print summary
     if itemsMoved then
         print("\nSorting complete:")
-        print(string.format("- Items sorted: %d", itemsSorted))
-        print(string.format("- Items skipped: %d", itemsSkipped))
+        print(string.format("- Items sorted to categories: %d", itemsSorted))
+        print(string.format("- Items sent to unknown: %d", itemsToUnknown))
     else
         print("\nNo items were sorted")
     end
