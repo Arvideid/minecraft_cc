@@ -827,8 +827,8 @@ Your task is to determine the most logical category for each barrel based on its
     return false
 end
 
--- Function to define categories (called only once during initial scan)
-function sortingTurtle.defineCategories()
+-- Function to define categories and assign them to barrels
+function sortingTurtle.defineAndAssignCategories()
     -- First, analyze barrel contents to inform category creation
     local itemsFound = {}
     
@@ -861,9 +861,18 @@ function sortingTurtle.defineCategories()
         for _, category in ipairs(sortingTurtle.categories) do
             print("- " .. category)
         end
+        
+        -- Assign the unknown category to the first barrel, leave others unassigned
+        sortingTurtle.barrelAssignments = {}
+        if sortingTurtle.numBarrels > 0 then
+            sortingTurtle.barrelAssignments[1] = "unknown"
+            print("Assigned barrel 1 to 'unknown' category")
+        end
+        
         return true
     end
     
+    -- Step 1: Define Categories
     local prompt = string.format([[
 You are a Minecraft storage system expert creating a categorization system. Your task is to define logical categories for sorting Minecraft items.
 
@@ -894,7 +903,7 @@ Example format:
 unknown
 dirt_blocks
 stone_blocks
-wooden_blocks
+wooden_planks
 logs
 seeds
 foraging
@@ -913,6 +922,13 @@ etc.
     if not response then
         print("Error: No response received, using only 'unknown' category")
         sortingTurtle.categories = {"unknown"}
+        
+        -- Assign the unknown category to the first barrel, leave others unassigned
+        sortingTurtle.barrelAssignments = {}
+        if sortingTurtle.numBarrels > 0 then
+            sortingTurtle.barrelAssignments[1] = "unknown"
+        end
+        
         return true
     end
     
@@ -959,17 +975,11 @@ etc.
         print("- " .. category)
     end
     
-    return true
-end
-
--- Function to assign categories to barrels
-function sortingTurtle.assignBarrelCategories()
+    -- Step 2: Now assign categories to barrels
     if sortingTurtle.numBarrels == 0 then 
         print("No barrels found, cannot assign categories")
         return false 
     end
-    
-    print("Barrels found: " .. sortingTurtle.numBarrels)
     
     -- Create detailed context of barrel contents with item names and display names
     local barrelContext = "Barrel contents:\n"
@@ -990,23 +1000,8 @@ function sortingTurtle.assignBarrelCategories()
         end
     end
     
-    -- Ensure we have categories defined
-    if #sortingTurtle.categories == 0 then
-        print("No categories defined, defining categories first...")
-        if not sortingTurtle.defineCategories() then
-            print("Failed to define categories!")
-            return false
-        end
-    end
-    
-    -- Print available categories
-    print("\nAvailable categories:")
-    for i, category in ipairs(sortingTurtle.categories) do
-        print(string.format("  %d. %s", i, category))
-    end
-    
     local categoriesText = table.concat(sortingTurtle.categories, "\n")
-    local prompt = string.format([[
+    local assignmentPrompt = string.format([[
 You are a Minecraft storage system expert. Assign the most appropriate category to each barrel based on its contents.
 
 BARREL CONTENTS:
@@ -1037,30 +1032,33 @@ Return ONLY category assignments, one per line, with exactly %d lines (one for e
 EXAMPLE OUTPUT for %d barrels:
 unknown
 stone_blocks
-wooden_blocks
+wooden_planks
 decorative_blocks
 crafting_materials
 etc.
 ]], barrelContext, categoriesText, sortingTurtle.numBarrels, sortingTurtle.numBarrels)
 
     print("Assigning categories to barrels based on contents analysis...")
-    local response = llm.getGeminiResponse(prompt)
-    if not response then
+    local assignResponse = llm.getGeminiResponse(assignmentPrompt)
+    if not assignResponse then
         print("Error: No category assignments received")
-        return false
+        -- Just assign unknown to barrel 1 and leave others empty
+        sortingTurtle.barrelAssignments = {}
+        sortingTurtle.barrelAssignments[1] = "unknown"
+        return true
     end
     
     print("\nRaw LLM response for barrel assignments:")
-    print(response)
+    print(assignResponse)
     
     -- Split response into lines and assign categories
     local assignments = {}
-    for line in response:gmatch("[^\r\n]+") do
+    for line in assignResponse:gmatch("[^\r\n]+") do
         -- Clean up each line (remove spaces, quotes)
         local category = line:gsub('"', ''):gsub("^%s*(.-)%s*$", "%1")
         if category ~= "" then
-        table.insert(assignments, category)
-    end
+            table.insert(assignments, category)
+        end
     end
     
     print(string.format("\nParsed %d category assignments from response", #assignments))
@@ -1071,8 +1069,8 @@ etc.
             #assignments, sortingTurtle.numBarrels))
         for i = #assignments + 1, sortingTurtle.numBarrels do
             table.insert(assignments, "unknown")
-            end
         end
+    end
     
     -- If we got too many assignments, trim the extras
     if #assignments > sortingTurtle.numBarrels then
@@ -1115,7 +1113,7 @@ etc.
         end
     end
     
-            return true
+    return true
 end
 
 -- Modify sortItems function to handle problematic items
@@ -1580,7 +1578,7 @@ function sortingTurtle.scanBarrels()
         -- Define categories if this is the first scan
         if next(sortingTurtle.categories) == nil then
             print("\nDefining storage categories...")
-            if sortingTurtle.defineCategories() then
+            if sortingTurtle.defineAndAssignCategories() then
                 print("Categories defined successfully!")
             else
                 print("Error: Could not define categories!")
@@ -1650,7 +1648,7 @@ function sortingTurtle.scanBarrels()
         
         -- Assign categories to barrels
         print("\nAssigning categories to barrels...")
-        if sortingTurtle.assignBarrelCategories() then
+        if sortingTurtle.defineAndAssignCategories() then
             print("Category assignment complete!")
             -- Print category assignments
             for barrel, category in pairs(sortingTurtle.barrelAssignments) do
@@ -1861,7 +1859,7 @@ function sortingTurtle.getBarrelSlot(itemName, itemDisplayName)
     if not hasAssignments then
         print("WARNING: No barrel assignments found! Running category assignment...")
         -- If we don't have any barrel assignments, try to run the assignment again
-        if sortingTurtle.assignBarrelCategories() then
+        if sortingTurtle.defineAndAssignCategories() then
             print("Successfully reassigned barrel categories")
             
             -- Print the updated assignments
@@ -2274,6 +2272,58 @@ Return your answers in JSON format as an array of objects with 'item' and 'categ
         print(response:sub(1, 500) .. (response:len() > 500 and "..." or ""))
         return false
     end
+end
+
+-- Function to analyze barrel contents and detect patterns
+function sortingTurtle.analyzeBarrelContents(barrel)
+    -- No need for complex analysis if barrel is empty
+    if barrel.contents.isEmpty then return "empty" end
+    
+    -- Track the number of items of each type
+    local itemTypes = {}
+    local itemMods = {}
+    
+    -- Check all items in the barrel
+    for _, item in ipairs(barrel.contents.items) do
+        -- Extract mod name and item name
+        local mod, itemName = item.name:match("^([^:]+):(.+)$")
+        
+        -- Increment count for this mod
+        if mod then
+            itemMods[mod] = (itemMods[mod] or 0) + 1
+        end
+        
+        -- Try to extract item type from name (e.g., "log" from "oak_log")
+        local itemType = itemName:match("_(%w+)$")
+        if itemType then
+            itemTypes[itemType] = (itemTypes[itemType] or 0) + 1
+        end
+    end
+    
+    -- Find the most common mod
+    local commonMod, modCount = nil, 0
+    for mod, count in pairs(itemMods) do
+        if count > modCount then
+            commonMod = mod
+            modCount = count
+        end
+    end
+    
+    -- Find the most common item type
+    local commonType, typeCount = nil, 0
+    for itemType, count in pairs(itemTypes) do
+        if count > typeCount then
+            commonType = itemType
+            typeCount = count
+        end
+    end
+    
+    -- Return pattern information
+    return {
+        mod = commonMod,
+        type = commonType,
+        items = #barrel.contents.items
+    }
 end
 
 -- Main loop
