@@ -690,7 +690,22 @@ end
 
 -- Function to analyze all barrels at once using LLM
 function sortingTurtle.analyzeBulkBarrels()
-    if #sortingTurtle.barrels == 0 then return end
+    if #sortingTurtle.barrels == 0 then return false end
+    
+    -- Count how many non-empty barrels we have
+    local nonEmptyBarrels = 0
+    for _, barrel in ipairs(sortingTurtle.barrels) do
+        if not barrel.contents.isEmpty then
+            nonEmptyBarrels = nonEmptyBarrels + 1
+        end
+    end
+    
+    if nonEmptyBarrels == 0 then
+        print("All barrels are empty, skipping bulk analysis")
+        return true
+    end
+    
+    print(string.format("Analyzing %d barrels with contents...", nonEmptyBarrels))
     
     -- Create a detailed context of all barrels and their contents
     local barrelContext = "Current barrel setup:\n"
@@ -701,10 +716,18 @@ function sortingTurtle.analyzeBulkBarrels()
         else
             barrelContext = barrelContext .. "\nContains:"
             for _, item in ipairs(barrel.contents.items) do
-                barrelContext = barrelContext .. string.format("\n- %s", item.displayName)
-            end
+                -- Extract more detailed information
+                local modName = item.name:match("^([^:]+):") or "unknown"
+                local itemType = item.name:match("^[^:]+:([^_]+)") or "unknown"
+                
+                barrelContext = barrelContext .. string.format("\n- %s (%s) [Mod: %s, Type: %s]", 
+                    item.displayName or item.name,
+                    item.name,
+                    modName,
+                    itemType)
             end
         end
+    end
         
     -- Create a structured analysis prompt
     local prompt = string.format([[
@@ -719,6 +742,7 @@ Analysis Guidelines:
 2. Consider crafting recipes and how items are used together in-game
 3. Look for patterns in existing barrel contents
 4. Think about what players would logically look for together
+5. Identify mods present in the system and their typical item categories
 
 Example Relationships (but don't limit yourself to these):
 - Building materials that are commonly used together
@@ -726,6 +750,7 @@ Example Relationships (but don't limit yourself to these):
 - Items used for similar purposes in-game
 - Blocks with similar textures or materials
 - Items from the same game mechanic or feature
+- Items from the same mod or mod system
 
 Response Format:
 You MUST return a valid JSON array in this EXACT format:
@@ -733,37 +758,72 @@ You MUST return a valid JSON array in this EXACT format:
   {
     "barrel": 1,
     "purpose": "Brief purpose description",
-    "suggested_items": ["item type 1", "item type 2"]
+    "category": "suggested_category_name",
+    "suggested_items": ["item type 1", "item type 2"],
+    "organization_tip": "A tip for organizing these items"
   }
 ]
 
 Requirements:
 - "barrel" must be a number from 1 to %d
 - "purpose" must be a single line describing the barrel's contents and theme
+- "category" must be a simple lowercase term with underscores (e.g., "building_blocks")
 - "suggested_items" must list similar items that would fit well
+- "organization_tip" must provide one practical storage organization suggestion
 - Response must be valid JSON
-- Include ALL barrels
+- Include ALL barrels, even empty ones (suggest a purpose for empty barrels)
 - No explanation text, ONLY the JSON array
 ]], barrelContext, sortingTurtle.numBarrels)
 
     local response = llm.getGeminiResponse(prompt)
     if response then
+        -- Print the raw response for debugging
+        print("\nRaw LLM response for barrel analysis:")
+        print(response:sub(1, 500) .. (response:len() > 500 and "..." or ""))
+        
         -- Parse the JSON response and update barrel information
         local success, analysisData = pcall(textutils.unserializeJSON, response)
         if success and analysisData then
             for _, analysis in ipairs(analysisData) do
                 if analysis.barrel and analysis.purpose then
-                    sortingTurtle.barrels[analysis.barrel].analysis = {
-                        purpose = analysis.purpose,
-                        suggested_items = analysis.suggested_items
-                    }
+                    if analysis.barrel <= #sortingTurtle.barrels then
+                        sortingTurtle.barrels[analysis.barrel].analysis = {
+                            purpose = analysis.purpose,
+                            category = analysis.category,
+                            suggested_items = analysis.suggested_items,
+                            organization_tip = analysis.organization_tip
+                        }
+                    end
                 end
             end
             return true
         else
-            print("Failed to parse LLM response. Response was:")
-            print(response)
+            print("Failed to parse LLM response as JSON. Response may be improperly formatted.")
+            -- Try to extract at least part of the JSON using a more lenient approach
+            -- Look for array pattern and try to fix common issues
+            local cleanedResponse = response:match("%[(.+)%]")
+            if cleanedResponse then
+                cleanedResponse = "[" .. cleanedResponse .. "]"
+                success, analysisData = pcall(textutils.unserializeJSON, cleanedResponse)
+                if success and analysisData then
+                    print("Successfully parsed partial JSON response after cleaning")
+                    for _, analysis in ipairs(analysisData) do
+                        if analysis.barrel and analysis.purpose and analysis.barrel <= #sortingTurtle.barrels then
+                            sortingTurtle.barrels[analysis.barrel].analysis = {
+                                purpose = analysis.purpose,
+                                category = analysis.category or "unknown",
+                                suggested_items = analysis.suggested_items or {},
+                                organization_tip = analysis.organization_tip or ""
+                            }
+                        end
+                    end
+                    return true
+                end
+            end
+            print("Failed to extract any usable data from LLM response")
         end
+    else
+        print("No response received from LLM for barrel analysis")
     end
     return false
 end
@@ -859,7 +919,7 @@ Define 10-15 logical Minecraft item categories that would make sense for sorting
 MINECRAFT-SPECIFIC CONSIDERATIONS:
 - Vanilla Minecraft groups items by material (wood, stone) and function (tools, weapons)
 - Redstone components are typically grouped together for circuit building
-- Building blocks are often categorized by material type 
+- Blocks are often categorized by material type 
 - Items that are part of the same crafting progression should be grouped together
 - Consider mod-specific categories for mods with many unique items
 - Think about how players would naturally look for items when crafting/building
@@ -1453,7 +1513,7 @@ Suggested items should be 3-5 other items that would logically belong in this ba
     return nil
 end
 
--- Modify scanBarrels to use the intelligent analysis
+-- Modify scanBarrels to use a batch analysis approach
 function sortingTurtle.scanBarrels()
     print("\n=== Starting Barrel Scan ===")
     
@@ -1519,7 +1579,7 @@ function sortingTurtle.scanBarrels()
                     print(string.format("Found storage block: %s", data.name))
                     foundBarrels = foundBarrels + 1
                     
-                    -- Read barrel contents immediately
+                    -- Read barrel contents immediately but don't analyze yet
                     local contents = sortingTurtle.readBarrel()
                     local barrelInfo = {
                         position = horizontalSteps,
@@ -1527,19 +1587,6 @@ function sortingTurtle.scanBarrels()
                         contents = contents,
                         blockData = data
                     }
-                    
-                    -- If barrel has contents, analyze them intelligently
-                    if not contents.isEmpty then
-                        print("Analyzing barrel contents...")
-                        barrelInfo.analysis = sortingTurtle.analyzeBarrelContentsIntelligently(barrelInfo)
-                        if barrelInfo.analysis then
-                            print(string.format("Analysis: %s - %s", 
-                                barrelInfo.analysis.category,
-                                barrelInfo.analysis.description))
-                        else
-                            print("Could not analyze barrel contents")
-                        end
-                    end
                     
                     table.insert(sortingTurtle.barrels, barrelInfo)
                     sortingTurtle.numBarrels = sortingTurtle.numBarrels + 1
@@ -1603,6 +1650,23 @@ function sortingTurtle.scanBarrels()
     if sortingTurtle.numBarrels > 0 then
         print(string.format("\nFound %d barrels across %d levels", 
             sortingTurtle.numBarrels, sortingTurtle.layout.currentLevel + 1))
+        
+        -- Now that we've collected data on all barrels, analyze them together
+        print("\nAnalyzing all barrel contents together...")
+        if sortingTurtle.analyzeBulkBarrels() then
+            print("Barrel analysis completed successfully!")
+            
+            for i, barrel in ipairs(sortingTurtle.barrels) do
+                if barrel.analysis then
+                    print(string.format("Barrel %d analysis: %s - %s", 
+                        i, 
+                        barrel.analysis.purpose or "Unknown purpose",
+                        barrel.analysis.suggested_items and table.concat(barrel.analysis.suggested_items, ", ") or "No suggestions"))
+                end
+            end
+        else
+            print("Warning: Bulk barrel analysis failed")
+        end
         
         -- Define categories if this is the first scan
         if next(sortingTurtle.categories) == nil then
@@ -1918,45 +1982,70 @@ function sortingTurtle.getBarrelSlot(itemName, itemDisplayName)
         print(string.format("No barrel found for cached category '%s', using unknown barrel", cachedCategory))
         return 1  -- Return unknown barrel
     end
-    
-    -- Extract detailed item information for better context
-    local modName, itemType, itemSubtype = "unknown", "unknown", "unknown"
-    if itemName then
-        -- Extract mod name (before the colon)
-        modName = itemName:match("^([^:]+):") or "unknown"
-        
-        -- Extract main item type (first part after colon)
-        itemType = itemName:match("^[^:]+:([^_]+)") or itemName
-        
-        -- Extract subtype if available (after first underscore)
-        itemSubtype = itemName:match("^[^:]+:[^_]+_([^_]+)") or ""
+
+    -- If our cache size is large enough, batch process uncategorized items
+    if sortingTurtle.uncategorizedItems == nil then
+        sortingTurtle.uncategorizedItems = {}
     end
     
-    -- Get barrel contents context to help with categorization
-    local barrelContentsContext = "Current barrel contents:\n"
-    for barrelNum, category in pairs(sortingTurtle.barrelAssignments) do
-        barrelContentsContext = barrelContentsContext .. string.format("Barrel %d (%s): ", barrelNum, category)
-        
-        -- Check if this barrel has items
-        if sortingTurtle.barrels[barrelNum] and not sortingTurtle.barrels[barrelNum].contents.isEmpty then
-            barrelContentsContext = barrelContentsContext .. "Contains "
-            local itemCount = #sortingTurtle.barrels[barrelNum].contents.items
-            barrelContentsContext = barrelContentsContext .. itemCount .. " unique item types\n"
-            
-            -- Include first 2-3 items as examples
-            for i = 1, math.min(3, itemCount) do
-                local item = sortingTurtle.barrels[barrelNum].contents.items[i]
-                barrelContentsContext = barrelContentsContext .. string.format("- %s\n", 
-                    item.displayName or item.name)
-            end
-        else
-            barrelContentsContext = barrelContentsContext .. "Empty\n"
+    -- Add this item to the uncategorized list
+    sortingTurtle.uncategorizedItems[itemName] = {
+        name = itemName,
+        displayName = itemDisplayName or itemName,
+        timestamp = os.epoch("local")
+    }
+    
+    -- Only do batch categorization if we have enough uncategorized items
+    -- or if it's been more than 30 seconds since we last encountered an uncategorized item
+    local BATCH_SIZE = 5
+    local TIME_THRESHOLD = 30 * 1000  -- 30 seconds in milliseconds
+    local currentTime = os.epoch("local")
+    local lastTimestamp = 0
+    local itemCount = 0
+    
+    for _, itemData in pairs(sortingTurtle.uncategorizedItems) do
+        itemCount = itemCount + 1
+        if itemData.timestamp > lastTimestamp then
+            lastTimestamp = itemData.timestamp
         end
     end
     
-    -- Determine which category this item belongs to
-    local categoriesText = table.concat(sortingTurtle.categories, "\n")
-    local prompt = string.format([[
+    if itemCount >= BATCH_SIZE or (currentTime - lastTimestamp > TIME_THRESHOLD and itemCount > 1) then
+        print(string.format("\nBatch categorizing %d items...", itemCount))
+        sortingTurtle.batchCategorizeItems()
+        
+        -- Check if our item was categorized in the batch
+        if sortingTurtle.itemCategoryCache[itemName] then
+            local cachedCategory = sortingTurtle.itemCategoryCache[itemName]
+            print(string.format("Using newly assigned category '%s' for %s", 
+                cachedCategory, itemDisplayName or itemName))
+                
+            -- Find a barrel with this category
+            for barrelNum, category in pairs(sortingTurtle.barrelAssignments) do
+                if category == cachedCategory then
+                    print(string.format("Found matching barrel %d for category '%s'", barrelNum, category))
+                    return barrelNum
+                end
+            end
+        end
+    else
+        -- If we're not doing batch categorization, fall back to individual categorization
+        -- Extract detailed item information for better context
+        local modName, itemType, itemSubtype = "unknown", "unknown", "unknown"
+        if itemName then
+            -- Extract mod name (before the colon)
+            modName = itemName:match("^([^:]+):") or "unknown"
+            
+            -- Extract main item type (first part after colon)
+            itemType = itemName:match("^[^:]+:([^_]+)") or itemName
+            
+            -- Extract subtype if available (after first underscore)
+            itemSubtype = itemName:match("^[^:]+:[^_]+_([^_]+)") or ""
+        end
+        
+        -- Determine which category this item belongs to
+        local categoriesText = table.concat(sortingTurtle.categories, "\n")
+        local prompt = string.format([[
 You are a Minecraft storage system expert. Categorize this item into the most appropriate category.
 
 ITEM DETAILS:
@@ -1965,9 +2054,6 @@ Display Name: %s
 Mod: %s
 Item Type: %s
 Item Subtype: %s
-
-CONTEXT:
-%s
 
 AVAILABLE CATEGORIES:
 %s
@@ -1986,55 +2072,166 @@ MINECRAFT CATEGORIZATION RULES:
 RESPONSE FORMAT:
 Return ONLY the category name, nothing else, chosen from the AVAILABLE CATEGORIES list.
 ]], 
-        itemName,
-        itemDisplayName or itemName,
-        modName,
-        itemType,
-        itemSubtype,
-        barrelContentsContext,
-        categoriesText)
-    
-    print("Requesting category for item...")
-    local itemCategory = llm.getGeminiResponse(prompt)
-    if not itemCategory then 
-        print("No category response received, using unknown barrel")
-        return 1  -- Return unknown barrel
-    end
-    
-    -- Clean up the response (remove any quotes or whitespace)
-    itemCategory = itemCategory:gsub('"', ''):gsub("^%s*(.-)%s*$", "%1")
-    print(string.format("Raw LLM response: '%s'", itemCategory))
-    
-    -- Verify the category is valid
-    local isValidCategory = false
-    for _, category in ipairs(sortingTurtle.categories) do
-        if category == itemCategory then
-            isValidCategory = true
-            break
+            itemName,
+            itemDisplayName or itemName,
+            modName,
+            itemType,
+            itemSubtype,
+            categoriesText)
+        
+        print("Requesting category for individual item...")
+        local itemCategory = llm.getGeminiResponse(prompt)
+        if not itemCategory then 
+            print("No category response received, using unknown barrel")
+            return 1  -- Return unknown barrel
         end
-    end
-    
-    if not isValidCategory then
-        print(string.format("Warning: Invalid category '%s' returned for item %s, using unknown", 
-            itemCategory, itemDisplayName or itemName))
-        return 1  -- Return unknown barrel
-    end
-    
-    -- Cache this category for future use
-    sortingTurtle.itemCategoryCache[itemName] = itemCategory
-    print(string.format("Categorized %s as '%s'", itemDisplayName or itemName, itemCategory))
-    
-    -- Try to find a barrel assigned to this category
-    for barrelNum, category in pairs(sortingTurtle.barrelAssignments) do
-        if category == itemCategory then
-            print(string.format("Found matching barrel %d for category '%s'", barrelNum, category))
-            return barrelNum
+        
+        -- Clean up the response (remove any quotes or whitespace)
+        itemCategory = itemCategory:gsub('"', ''):gsub("^%s*(.-)%s*$", "%1")
+        print(string.format("Raw LLM response: '%s'", itemCategory))
+        
+        -- Verify the category is valid
+        local isValidCategory = false
+        for _, category in ipairs(sortingTurtle.categories) do
+            if category == itemCategory then
+                isValidCategory = true
+                break
+            end
+        end
+        
+        if not isValidCategory then
+            print(string.format("Warning: Invalid category '%s' returned for item %s, using unknown", 
+                itemCategory, itemDisplayName or itemName))
+            itemCategory = "unknown"
+        end
+        
+        -- Cache this category for future use
+        sortingTurtle.itemCategoryCache[itemName] = itemCategory
+        print(string.format("Categorized %s as '%s'", itemDisplayName or itemName, itemCategory))
+        
+        -- Also remove this item from the uncategorized list
+        sortingTurtle.uncategorizedItems[itemName] = nil
+        
+        -- Try to find a barrel assigned to this category
+        for barrelNum, category in pairs(sortingTurtle.barrelAssignments) do
+            if category == itemCategory then
+                print(string.format("Found matching barrel %d for category '%s'", barrelNum, category))
+                return barrelNum
+            end
         end
     end
     
     -- If no barrel found for the specific category, use unknown (first barrel)
-    print(string.format("No barrel available for category '%s', using unknown", itemCategory))
+    print("No matching barrel found, using unknown barrel")
     return 1  -- Return unknown barrel
+end
+
+-- New function for batch categorization of multiple items
+function sortingTurtle.batchCategorizeItems()
+    if not sortingTurtle.uncategorizedItems or next(sortingTurtle.uncategorizedItems) == nil then
+        return  -- No items to categorize
+    end
+    
+    -- Create a list of all uncategorized items
+    local itemsList = ""
+    local itemsToProcess = {}
+    
+    for itemName, itemData in pairs(sortingTurtle.uncategorizedItems) do
+        table.insert(itemsToProcess, itemData)
+        
+        -- Extract detailed item information
+        local modName = itemName:match("^([^:]+):") or "unknown"
+        local itemType = itemName:match("^[^:]+:([^_]+)") or "unknown"
+        
+        itemsList = itemsList .. string.format("\nItem: %s (%s)\n", 
+            itemData.displayName, itemName)
+        itemsList = itemsList .. string.format("- Mod: %s\n", modName)
+        itemsList = itemsList .. string.format("- Type: %s\n", itemType)
+    end
+    
+    -- Create a batch categorization prompt
+    local categoriesText = table.concat(sortingTurtle.categories, "\n")
+    local prompt = string.format([[
+You are a Minecraft storage system expert. Categorize these items into their most appropriate categories.
+
+ITEMS TO CATEGORIZE:
+%s
+
+AVAILABLE CATEGORIES:
+%s
+
+TASK:
+Assign EACH item to the MOST appropriate category from the available categories list.
+
+MINECRAFT CATEGORIZATION RULES:
+- Items from the same mod often belong together
+- Items with similar crafting recipes or usage should go together
+- The item's name often gives clues about its purpose
+- Consider both material type and function
+- If unsure, use the 'unknown' category
+- For truly problematic items, use 'problematic_items' category
+
+RESPONSE FORMAT:
+Return a JSON array with category assignments for each item in this exact format:
+[
+  {
+    "item": "item_name_exactly_as_given",
+    "category": "assigned_category"
+  }
+]
+
+The category MUST be one from the AVAILABLE CATEGORIES list.
+ONLY return the JSON array, no explanation text.
+]], itemsList, categoriesText)
+    
+    print("Requesting batch categorization for " .. #itemsToProcess .. " items...")
+    local response = llm.getGeminiResponse(prompt)
+    
+    if not response then
+        print("No response received for batch categorization")
+        return
+    end
+    
+    -- Try to parse the JSON response
+    local success, categorizations = pcall(textutils.unserializeJSON, response)
+    if success and categorizations then
+        print("Successfully received batch categorizations")
+        
+        -- Update the item category cache with the new assignments
+        local validAssignments = 0
+        for _, assignment in ipairs(categorizations) do
+            if assignment.item and assignment.category then
+                -- Verify the category is valid
+                local isValidCategory = false
+                for _, category in ipairs(sortingTurtle.categories) do
+                    if category == assignment.category then
+                        isValidCategory = true
+                        break
+                    end
+                end
+                
+                if isValidCategory then
+                    sortingTurtle.itemCategoryCache[assignment.item] = assignment.category
+                    -- Remove from uncategorized list
+                    sortingTurtle.uncategorizedItems[assignment.item] = nil
+                    validAssignments = validAssignments + 1
+                    print(string.format("Assigned '%s' to category '%s'", 
+                        assignment.item, assignment.category))
+                else
+                    print(string.format("Skipping invalid category '%s' for item '%s'", 
+                        assignment.category, assignment.item))
+                    -- Set to unknown as a fallback
+                    sortingTurtle.itemCategoryCache[assignment.item] = "unknown"
+                    sortingTurtle.uncategorizedItems[assignment.item] = nil
+                end
+            end
+        end
+        
+        print(string.format("Added %d items to category cache", validAssignments))
+    else
+        print("Failed to parse batch categorization response:")
+        print(response:sub(1, 500) .. (response:len() > 500 and "..." or ""))
+    end
 end
 
 -- Main loop
