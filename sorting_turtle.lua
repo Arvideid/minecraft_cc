@@ -58,26 +58,15 @@ end
 -- Function to return to initial position using movement history
 function sortingTurtle.returnToInitial()
     print("Returning to initial position...")
-    print(string.format("Current position: x=%d, y=%d, z=%d, facing=%d", 
-        sortingTurtle.position.x, sortingTurtle.position.y, sortingTurtle.position.z, sortingTurtle.position.facing))
-    print(string.format("Movement history size: %d", #sortingTurtle.moveHistory))
     
     -- Reverse through movement history
     for i = #sortingTurtle.moveHistory, 1, -1 do
-        local originalMove = sortingTurtle.moveHistory[i]
-        local reverseMove = sortingTurtle.getReverseMovement(originalMove)
-        
-        print(string.format("Reversing step %d: %s → %s", i, originalMove, reverseMove or "unknown"))
-        
+        local reverseMove = sortingTurtle.getReverseMovement(sortingTurtle.moveHistory[i])
         if reverseMove then
-            local success = turtle[reverseMove]()
-            if not success then
-                print(string.format("WARNING: Could not complete reverse movement %s!", reverseMove))
-                print(string.format("Current position: x=%d, y=%d, z=%d, facing=%d", 
-                    sortingTurtle.position.x, sortingTurtle.position.y, sortingTurtle.position.z, sortingTurtle.position.facing))
+            if not turtle[reverseMove]() then
+                print("Warning: Could not complete reverse movement!")
                 break
             end
-            
             -- Update position for the reverse movement
             if reverseMove == "forward" or reverseMove == "back" or 
                reverseMove == "up" or reverseMove == "down" or
@@ -90,8 +79,6 @@ function sortingTurtle.returnToInitial()
     -- Clear movement history after returning
     sortingTurtle.moveHistory = {}
     print("Returned to initial position")
-    print(string.format("Final position: x=%d, y=%d, z=%d, facing=%d", 
-        sortingTurtle.position.x, sortingTurtle.position.y, sortingTurtle.position.z, sortingTurtle.position.facing))
 end
 
 -- After the configuration section, add new environment tracking
@@ -741,8 +728,8 @@ function sortingTurtle.analyzeBulkBarrels()
                     itemType,
                     itemMaterial)
             end
+            end
         end
-    end
         
     -- Create a structured analysis prompt
     local prompt = string.format([[
@@ -818,12 +805,12 @@ Requirements:
             for _, analysis in ipairs(analysisData) do
                 if analysis.barrel and analysis.purpose then
                     if analysis.barrel <= #sortingTurtle.barrels then
-                        sortingTurtle.barrels[analysis.barrel].analysis = {
-                            purpose = analysis.purpose,
+                    sortingTurtle.barrels[analysis.barrel].analysis = {
+                        purpose = analysis.purpose,
                             category = analysis.category,
                             suggested_items = analysis.suggested_items,
                             organization_tip = analysis.organization_tip
-                        }
+                    }
                     end
                 end
             end
@@ -1232,8 +1219,8 @@ problematic_items
         -- Clean up each line (remove spaces, quotes)
         local category = line:gsub('"', ''):gsub("^%s*(.-)%s*$", "%1")
         if category ~= "" then
-            table.insert(assignments, category)
-        end
+        table.insert(assignments, category)
+    end
     end
     
     print(string.format("\nParsed %d category assignments from response", #assignments))
@@ -1244,8 +1231,8 @@ problematic_items
             #assignments, sortingTurtle.numBarrels))
         for i = #assignments + 1, sortingTurtle.numBarrels do
             table.insert(assignments, "unknown")
+            end
         end
-    end
     
     -- If we got too many assignments, trim the extras
     if #assignments > sortingTurtle.numBarrels then
@@ -1285,10 +1272,10 @@ problematic_items
         for i = #sortingTurtle.barrels, 1, -1 do
             if sortingTurtle.barrels[i].contents.isEmpty then
                 lastEmptyBarrel = i
-                break
-            end
+            break
         end
-        
+    end
+    
         if lastEmptyBarrel and lastEmptyBarrel <= #assignments then
             assignments[lastEmptyBarrel] = "problematic_items"
         else
@@ -1304,8 +1291,8 @@ problematic_items
             if category == validCategory then
                 isValid = true
                 break
-            end
         end
+    end
         if not isValid then
             print(string.format("Warning: Invalid category '%s' assigned to barrel %d, using unknown", 
                 category, i))
@@ -1324,7 +1311,7 @@ problematic_items
         end
     end
     
-    return true
+            return true
 end
 
 -- Modify sortItems function to handle problematic items
@@ -1644,10 +1631,6 @@ function sortingTurtle.scanBarrels()
     -- Clear movement history at start of scan
     sortingTurtle.moveHistory = {}
     
-    -- Print initial position for debugging
-    print(string.format("Initial position: x=%d, y=%d, z=%d, facing=%d", 
-        sortingTurtle.position.x, sortingTurtle.position.y, sortingTurtle.position.z, sortingTurtle.position.facing))
-    
     -- Check fuel before starting
     if not sortingTurtle.checkFuel() then
         print("Cannot scan: Insufficient fuel!")
@@ -1739,32 +1722,19 @@ function sortingTurtle.scanBarrels()
             end
         end
         
-        -- Debug output before returning
-        print(string.format("Returning from level %d, horizontal steps: %d", level, horizontalSteps))
-        print(string.format("Current position: x=%d, y=%d, z=%d, facing=%d", 
-            sortingTurtle.position.x, sortingTurtle.position.y, sortingTurtle.position.z, sortingTurtle.position.facing))
-        
-        -- Quick return - move back without checking barrels
-        -- FIX: Don't add back movements to history since we'll use returnToInitial later
+        -- Quick return - just move back without checking barrels
         while horizontalSteps > 0 do
             turtle.back()
-            -- CHANGE: Don't add these movements to history, as they're temporary
-            -- Instead, update position only
+            sortingTurtle.addToHistory("back")
             sortingTurtle.updatePosition("back")
             horizontalSteps = horizontalSteps - 1
         end
-        
-        -- Debug output after returning on this level
-        print(string.format("Returned to start of level %d", level))
-        print(string.format("Position after level return: x=%d, y=%d, z=%d, facing=%d", 
-            sortingTurtle.position.x, sortingTurtle.position.y, sortingTurtle.position.z, sortingTurtle.position.facing))
         
         -- If not at last level, move up for next scan
         if level < sortingTurtle.layout.maxVerticalSteps - 1 then
             if turtle.up() then
                 sortingTurtle.addToHistory("up")
                 sortingTurtle.updatePosition("up")
-                print("Moved up to next level")
             else
                 print(string.format("Cannot move up to level %d!", level + 1))
                 break
@@ -1772,23 +1742,8 @@ function sortingTurtle.scanBarrels()
         end
     end
     
-    -- Print position before final return
-    print("\nPosition before final return:")
-    print(string.format("x=%d, y=%d, z=%d, facing=%d", 
-        sortingTurtle.position.x, sortingTurtle.position.y, sortingTurtle.position.z, sortingTurtle.position.facing))
-    
-    print("\nMovement history before final return:")
-    for i, move in ipairs(sortingTurtle.moveHistory) do
-        print(string.format("%d: %s", i, move))
-    end
-    
     -- Return to initial position
     sortingTurtle.returnToInitial()
-    
-    -- Print position after final return for debugging
-    print("\nPosition after returning to initial:")
-    print(string.format("x=%d, y=%d, z=%d, facing=%d", 
-        sortingTurtle.position.x, sortingTurtle.position.y, sortingTurtle.position.z, sortingTurtle.position.facing))
     
     -- Print barrel summary
     if sortingTurtle.numBarrels > 0 then
@@ -1881,7 +1836,6 @@ function sortingTurtle.scanBarrels()
                 end
             else
                 print("\nNo suggested categories from barrel analysis")
-            end
         end
         
         -- Assign categories to barrels
@@ -1894,11 +1848,12 @@ function sortingTurtle.scanBarrels()
             end
         else
             print("Warning: Could not assign categories to barrels")
-            -- Emergency fallback - ensure at least unknown barrel exists
-            if sortingTurtle.numBarrels > 0 and next(sortingTurtle.barrelAssignments) == nil then
-                sortingTurtle.barrelAssignments = {}
-                sortingTurtle.barrelAssignments[1] = "unknown"
-                print("EMERGENCY: Assigned Barrel 1 to unknown category")
+                -- Emergency fallback - ensure at least unknown barrel exists
+                if sortingTurtle.numBarrels > 0 and next(sortingTurtle.barrelAssignments) == nil then
+                    sortingTurtle.barrelAssignments = {}
+                    sortingTurtle.barrelAssignments[1] = "unknown"
+                    print("EMERGENCY: Assigned Barrel 1 to unknown category")
+                end
             end
         end
     else
