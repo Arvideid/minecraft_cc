@@ -770,12 +770,70 @@ end
 
 -- Function to define categories (called only once during initial scan)
 function sortingTurtle.defineCategories()
-    local prompt = [[
-Define a list of Minecraft item categories for sorting items into barrels.
-IMPORTANT: The list MUST start with 'unknown' and end with 'problematic_items'.
-Use short, simple categories like: wood, stone, ores, metals, tools, redstone, create, food, etc.
+    -- First, analyze barrel contents to inform category creation
+    local itemsFound = {}
+    local modsFound = {}
+    
+    -- Collect all unique items and mods from barrels
+    for _, barrel in ipairs(sortingTurtle.barrels) do
+        if not barrel.contents.isEmpty then
+            for _, item in ipairs(barrel.contents.items) do
+                itemsFound[item.name] = item.displayName or item.name
+                
+                -- Extract mod name from item
+                local modName = item.name:match("^([^:]+):")
+                if modName then
+                    modsFound[modName] = (modsFound[modName] or 0) + 1
+                end
+            end
+        end
+    end
+    
+    -- Convert to lists for the prompt
+    local itemsList = ""
+    local modsList = ""
+    
+    for name, displayName in pairs(itemsFound) do
+        itemsList = itemsList .. "- " .. displayName .. " (" .. name .. ")\n"
+    end
+    
+    for mod, count in pairs(modsFound) do
+        modsList = modsList .. "- " .. mod .. " (" .. count .. " items)\n"
+    end
+    
+    local prompt = string.format([[
+You are a Minecraft storage system expert. Create a comprehensive list of item categories for a sorting system.
+
+CONTEXT:
+The system has found these items in the environment:
+%s
+
+These mods are present in the environment:
+%s
+
+TASK:
+Define 10-15 logical Minecraft item categories that would make sense for sorting items into barrels.
+
+REQUIREMENTS:
+1. The list MUST start with "unknown" and end with "problematic_items"
+2. Categories should be specific enough to be useful but general enough to group related items
+3. Include categories for common Minecraft items (building blocks, ores, tools, food, etc.)
+4. Include mod-specific categories for any mods with multiple items
+5. Use short, simple category names (1-2 words, lowercase with underscores)
+6. Categories should be mutually exclusive when possible
+7. Consider both item function and material type
+
+IMPORTANT MINECRAFT KNOWLEDGE:
+- Building blocks are often grouped by material (wood, stone, glass)
+- Redstone components should be grouped together
+- Tools, weapons, and armor are distinct categories
+- Food items should be separate from ingredients
+- Ores, ingots, and gems are often grouped by processing stage
+- Mob drops often form their own category
+- Decorative blocks might be separate from functional blocks
+
 Return ONLY category names, one per line, nothing else.
-Example response:
+Example format:
 unknown
 wood
 stone
@@ -783,11 +841,14 @@ ores
 metals
 tools
 redstone
-create
 food
-problematic_items]]
+farming
+mob_drops
+decorative
+problematic_items
+]], itemsList, modsList)
 
-    print("Requesting categories...")
+    print("Requesting categories based on environment analysis...")
     local response = llm.getGeminiResponse(prompt)
     
     if not response then
@@ -840,40 +901,64 @@ end
 function sortingTurtle.assignBarrelCategories()
     if sortingTurtle.numBarrels == 0 then return false end
     
-    -- Create simple context of barrel contents
+    -- Create detailed context of barrel contents with item names and display names
     local barrelContext = "Barrel contents:\n"
     for i, barrel in ipairs(sortingTurtle.barrels) do
         barrelContext = barrelContext .. string.format("\nBarrel %d: ", i)
         if barrel.contents.isEmpty then
             barrelContext = barrelContext .. "EMPTY"
         else
-            local items = {}
+            barrelContext = barrelContext .. "\n"
             for _, item in ipairs(barrel.contents.items) do
-                table.insert(items, item.displayName)
+                barrelContext = barrelContext .. string.format("- %s (%s)\n", 
+                    item.displayName or item.name, 
+                    item.name)
             end
-            barrelContext = barrelContext .. table.concat(items, ", ")
         end
     end
     
     local categoriesText = table.concat(sortingTurtle.categories, "\n")
     local prompt = string.format([[
-Assign ONE category to each barrel based on its contents.
-IMPORTANT: The first barrel (Barrel 1) MUST be assigned to 'unknown' category.
-Use ONLY categories from this list:
+You are a Minecraft storage system expert. Assign the most appropriate category to each barrel based on its contents.
+
+BARREL CONTENTS:
 %s
 
-Barrel Contents:
+AVAILABLE CATEGORIES:
 %s
 
-Return ONLY category assignments, one per line.
+TASK:
+Assign ONE category to each barrel based on its contents or leave it empty for future use.
+
+RULES:
+1. The first barrel (Barrel 1) MUST be assigned to 'unknown' category
+2. Each barrel should get exactly ONE category from the list
+3. For barrels with items, choose the category that best matches ALL items in the barrel
+4. For empty barrels, assign a category that isn't yet assigned or would be useful
+5. Prioritize assigning all categories before duplicating
+6. If a barrel has mixed contents that don't clearly fit one category, use 'unknown'
+7. Make sure at least one barrel is assigned to 'problematic_items'
+
+MINECRAFT KNOWLEDGE TO APPLY:
+- Look for patterns in item names and types
+- Consider both material type and item function
+- Items with similar crafting ingredients often belong together
+- Items used for similar purposes should be grouped together
+- Mod-specific items often belong in their own categories
+
+Return ONLY category assignments, one per line, matching the number of barrels.
 Example format:
 unknown
 stone
 ores
+metals
+tools
+redstone
+food
+problematic_items
+]], barrelContext, categoriesText)
 
-One category per line, matching the number of barrels.]], 
-        categoriesText, barrelContext)
-
+    print("Assigning categories to barrels based on contents analysis...")
     local response = llm.getGeminiResponse(prompt)
     if not response then
         print("Error: No category assignments received")
@@ -891,6 +976,34 @@ One category per line, matching the number of barrels.]],
     -- Ensure first barrel is assigned to unknown
     if #assignments > 0 then
         assignments[1] = "unknown"
+    end
+    
+    -- Ensure at least one barrel is assigned to problematic_items
+    local hasProblematicBarrel = false
+    for _, category in ipairs(assignments) do
+        if category == "problematic_items" then
+            hasProblematicBarrel = true
+            break
+        end
+    end
+    
+    -- If no problematic_items barrel, assign the last empty barrel or the last barrel
+    if not hasProblematicBarrel and #assignments > 1 then
+        -- Find the last empty barrel
+        local lastEmptyBarrel = nil
+        for i = #sortingTurtle.barrels, 1, -1 do
+            if sortingTurtle.barrels[i].contents.isEmpty then
+                lastEmptyBarrel = i
+                break
+            end
+        end
+        
+        if lastEmptyBarrel and lastEmptyBarrel <= #assignments then
+            assignments[lastEmptyBarrel] = "problematic_items"
+        else
+            -- If no empty barrel, use the last barrel
+            assignments[#assignments] = "problematic_items"
+        end
     end
     
     -- Verify all assignments are valid categories
@@ -926,28 +1039,91 @@ end
 function sortingTurtle.getBarrelSlot(itemName, itemDisplayName)
     if sortingTurtle.numBarrels == 0 then return nil end
     
+    -- Check if we've already categorized this item before
+    if sortingTurtle.itemCategoryCache == nil then
+        sortingTurtle.itemCategoryCache = {}
+    end
+    
+    -- If we've seen this item before, use the cached category
+    if sortingTurtle.itemCategoryCache[itemName] then
+        local cachedCategory = sortingTurtle.itemCategoryCache[itemName]
+        print(string.format("Using cached category '%s' for %s", 
+            cachedCategory, itemDisplayName or itemName))
+            
+        -- Find a barrel with this category
+        for barrelNum, category in pairs(sortingTurtle.barrelAssignments) do
+            if category == cachedCategory then
+                return barrelNum
+            end
+        end
+    end
+    
+    -- Build context about existing barrel contents for better categorization
+    local barrelContentsContext = ""
+    for barrelNum, category in pairs(sortingTurtle.barrelAssignments) do
+        local barrel = sortingTurtle.barrels[barrelNum]
+        if not barrel.contents.isEmpty then
+            barrelContentsContext = barrelContentsContext .. string.format(
+                "Barrel %d (Category: %s) contains: ", barrelNum, category)
+            
+            local itemNames = {}
+            for _, item in ipairs(barrel.contents.items) do
+                table.insert(itemNames, item.displayName or item.name)
+            end
+            
+            barrelContentsContext = barrelContentsContext .. table.concat(itemNames, ", ") .. "\n"
+        end
+    end
+    
+    -- Extract mod name and item type for better context
+    local modName, itemType = "unknown", "unknown"
+    if itemName then
+        modName = itemName:match("^([^:]+):") or "unknown"
+        itemType = itemName:match("^[^:]+:(.+)$") or itemName
+    end
+    
     -- First, determine which category this item belongs to
     local categoriesText = table.concat(sortingTurtle.categories, "\n")
     local prompt = string.format([[
-Categorize this Minecraft item into one of the available categories.
-If you're unsure or the item doesn't clearly fit any specific category, use 'unknown'.
+You are a Minecraft storage system expert. Categorize this item into the most appropriate category.
 
-Item Details:
+ITEM DETAILS:
 Name: %s
 Display Name: %s
+Mod: %s
+Item Type: %s
 
-Available Categories (in order of priority):
+CURRENT STORAGE SYSTEM:
 %s
 
-IMPORTANT RULES:
+AVAILABLE CATEGORIES:
+%s
+
+TASK:
+Determine which category this item belongs to based on Minecraft knowledge and existing storage patterns.
+
+MINECRAFT KNOWLEDGE TO APPLY:
+- Building blocks are grouped by material (wood, stone, glass)
+- Redstone components belong together
+- Tools, weapons, and armor are distinct categories
+- Food items are separate from ingredients
+- Ores, ingots, and gems are grouped by processing stage
+- Mod-specific items often belong in their own categories
+- Items used together in crafting or gameplay should be grouped together
+
+RULES:
 1. Return ONLY the category name, nothing else
-2. If unsure, ALWAYS use 'unknown' category
-3. Only use 'problematic_items' if the item is causing system issues
-4. The category MUST be from the list above, no exceptions
+2. The category MUST be from the list above
+3. If the item clearly belongs with items in an existing barrel, use that barrel's category
+4. If unsure, use 'unknown' category
+5. Only use 'problematic_items' if the item is causing system issues
 
 Return just the category name:]], 
         itemName,
-        itemDisplayName,
+        itemDisplayName or itemName,
+        modName,
+        itemType,
+        barrelContentsContext,
         categoriesText)
     
     local itemCategory = llm.getGeminiResponse(prompt)
@@ -973,6 +1149,10 @@ Return just the category name:]],
             itemCategory, itemDisplayName or itemName))
         return 1  -- Return first barrel (unknown) if invalid category
     end
+    
+    -- Cache this category for future use
+    sortingTurtle.itemCategoryCache[itemName] = itemCategory
+    print(string.format("Categorized %s as '%s'", itemDisplayName or itemName, itemCategory))
     
     -- First, try to find a barrel already assigned to this category that has items
     for barrelNum, category in pairs(sortingTurtle.barrelAssignments) do
@@ -1017,20 +1197,95 @@ end
 function sortingTurtle.handleProblematicItem(itemName, itemDisplayName)
     print(string.format("\nHandling problematic item: %s", itemDisplayName or itemName))
     
+    -- Extract mod name and item type for better analysis
+    local modName = itemName:match("^([^:]+):") or "unknown"
+    local itemType = itemName:match("^[^:]+:(.+)$") or itemName
+    
+    -- Try to analyze why this item is problematic
+    local prompt = string.format([[
+You are a Minecraft item analysis expert. Analyze this problematic item that couldn't be sorted properly.
+
+ITEM DETAILS:
+Name: %s
+Display Name: %s
+Mod: %s
+Item Type: %s
+
+TASK:
+1. Determine why this item might be difficult to categorize
+2. Suggest the most appropriate category for this item
+3. Explain any special handling this item might need
+
+RESPONSE FORMAT:
+Return a JSON object with these fields:
+{
+  "suggested_category": "category_name",
+  "reason": "Brief explanation of why this item is problematic",
+  "special_handling": "Any special handling needed for this item"
+}
+]], itemName, itemDisplayName or itemName, modName, itemType)
+
+    local response = llm.getGeminiResponse(prompt)
+    local analysis = nil
+    
+    if response then
+        -- Try to parse the JSON response
+        local success, data = pcall(textutils.unserializeJSON, response)
+        if success and data then
+            analysis = data
+        end
+    end
+    
+    -- Add item to problematic items list if not already there
+    if not sortingTurtle.problematicItems[itemName] then
+        sortingTurtle.problematicItems[itemName] = {
+            name = itemName,
+            displayName = itemDisplayName,
+            attempts = 1,
+            analysis = analysis
+        }
+    else
+        -- Update existing entry
+        sortingTurtle.problematicItems[itemName].attempts = 
+            sortingTurtle.problematicItems[itemName].attempts + 1
+        sortingTurtle.problematicItems[itemName].analysis = analysis
+    end
+    
+    -- Print analysis if available
+    if analysis then
+        print("Analysis of problematic item:")
+        print(string.format("- Suggested category: %s", analysis.suggested_category or "unknown"))
+        print(string.format("- Reason: %s", analysis.reason or "Unknown reason"))
+        if analysis.special_handling then
+            print(string.format("- Special handling: %s", analysis.special_handling))
+        end
+        
+        -- Try to find a barrel with the suggested category if it's valid
+        if analysis.suggested_category then
+            local isValidCategory = false
+            for _, category in ipairs(sortingTurtle.categories) do
+                if category == analysis.suggested_category then
+                    isValidCategory = true
+                    break
+                end
+            end
+            
+            if isValidCategory then
+                for barrelNum, category in pairs(sortingTurtle.barrelAssignments) do
+                    if category == analysis.suggested_category then
+                        print(string.format("Trying suggested category barrel %d", barrelNum))
+                        return barrelNum
+                    end
+                end
+            end
+        end
+    end
+    
     -- Find a barrel assigned to problematic_items category
     for barrelNum, category in pairs(sortingTurtle.barrelAssignments) do
         if category == "problematic_items" then
-            -- Add item to problematic items list if not already there
-            if not sortingTurtle.problematicItems[itemName] then
-                sortingTurtle.problematicItems[itemName] = {
-                    name = itemName,
-                    displayName = itemDisplayName,
-                    attempts = 1
-                }
-            end
-            
             print(string.format("Assigning to problematic items barrel %d", barrelNum))
-            return true
+            return barrelNum
         end
     end
     
@@ -1040,12 +1295,12 @@ function sortingTurtle.handleProblematicItem(itemName, itemDisplayName)
             -- Assign this barrel to problematic_items category
             sortingTurtle.barrelAssignments[barrelNum] = "problematic_items"
             print(string.format("Assigned empty barrel %d to problematic items", barrelNum))
-            return true
+            return barrelNum
         end
     end
     
     print("No available barrel for problematic items!")
-    return false
+    return 1  -- Return unknown barrel as last resort
 end
 
 -- Modify sortItems function to handle problematic items
@@ -1092,6 +1347,7 @@ function sortingTurtle.sortItems()
     local itemsMoved = false
     local itemsSorted = 0
     local itemsToUnknown = 0
+    local problematicItems = 0
     
     while true do
         -- Clear movement history before processing each item
@@ -1109,30 +1365,60 @@ function sortingTurtle.sortItems()
                 itemDetail.displayName or itemDetail.name,
                 itemCategory))
             
+            -- First try normal categorization
             local barrelSlot = sortingTurtle.getBarrelSlot(itemDetail.name, itemDetail.displayName)
-            -- barrelSlot will always be valid now (at minimum it will be 1 for unknown)
+            
+            -- If we couldn't get a valid barrel or it's the unknown barrel and we've tried before,
+            -- try handling it as a problematic item
+            local isProblematic = false
+            if barrelSlot == 1 and sortingTurtle.problematicItems[itemDetail.name] then
+                print("This item has been sent to unknown before, trying problematic item handling...")
+                local problematicBarrelSlot = sortingTurtle.handleProblematicItem(itemDetail.name, itemDetail.displayName)
+                if problematicBarrelSlot and problematicBarrelSlot > 1 then
+                    barrelSlot = problematicBarrelSlot
+                    isProblematic = true
+                end
+            end
             
             print(string.format("Moving to barrel %d...", barrelSlot))
             -- Move to barrel and drop item
             if sortingTurtle.moveToBarrel(barrelSlot) then
                 if turtle.drop() then
                     itemsMoved = true
-                    if barrelSlot == 1 then
+                    if isProblematic then
+                        problematicItems = problematicItems + 1
+                        print(string.format("Stored in problematic items barrel %d", barrelSlot))
+                    elseif barrelSlot == 1 then
                         itemsToUnknown = itemsToUnknown + 1
+                        print("Stored in unknown barrel")
                     else
                         itemsSorted = itemsSorted + 1
+                        print(string.format("Stored in barrel %d", barrelSlot))
                     end
-                    print(string.format("Stored in barrel %d", barrelSlot))
                 else
                     print("Warning: Could not store item in barrel!")
-                    -- If we can't store in target barrel, use unknown barrel
+                    -- If we can't store in target barrel, try handling as problematic
                     sortingTurtle.returnToInitial()
-                    if sortingTurtle.moveToBarrel(1) then
+                    local problematicBarrelSlot = sortingTurtle.handleProblematicItem(itemDetail.name, itemDetail.displayName)
+                    if problematicBarrelSlot and sortingTurtle.moveToBarrel(problematicBarrelSlot) then
                         if turtle.drop() then
-                            itemsToUnknown = itemsToUnknown + 1
-                            print("Stored in unknown barrel")
+                            problematicItems = problematicItems + 1
+                            print(string.format("Stored in problematic items barrel %d after failure", problematicBarrelSlot))
                         else
-                            print("Error: Could not store in unknown barrel!")
+                            print("Error: Could not store in problematic items barrel!")
+                            -- Last resort: unknown barrel
+                            sortingTurtle.returnToInitial()
+                            if sortingTurtle.moveToBarrel(1) then
+                                if turtle.drop() then
+                                    itemsToUnknown = itemsToUnknown + 1
+                                    print("Stored in unknown barrel as last resort")
+                                else
+                                    print("CRITICAL ERROR: Could not store item anywhere!")
+                                    -- Drop the item in front of the turtle
+                                    sortingTurtle.returnToInitial()
+                                    turtle.drop()
+                                end
+                            end
                         end
                     end
                 end
@@ -1163,6 +1449,7 @@ function sortingTurtle.sortItems()
         print("\nSorting complete:")
         print(string.format("- Items sorted to categories: %d", itemsSorted))
         print(string.format("- Items sent to unknown: %d", itemsToUnknown))
+        print(string.format("- Problematic items handled: %d", problematicItems))
     else
         print("\nNo items were sorted")
     end
@@ -1190,7 +1477,89 @@ function sortingTurtle.hasItemsInStorage()
     return false
 end
 
--- Optimized scan function that scans both horizontally and vertically
+-- Function to analyze barrel contents more intelligently
+function sortingTurtle.analyzeBarrelContentsIntelligently(barrel)
+    if not barrel or barrel.contents.isEmpty then return nil end
+    
+    -- Extract item information
+    local itemNames = {}
+    local displayNames = {}
+    local modNames = {}
+    
+    for _, item in ipairs(barrel.contents.items) do
+        table.insert(itemNames, item.name)
+        table.insert(displayNames, item.displayName or item.name)
+        
+        -- Extract mod name
+        local modName = item.name:match("^([^:]+):")
+        if modName then
+            modNames[modName] = (modNames[modName] or 0) + 1
+        end
+    end
+    
+    -- Determine primary mod if any
+    local primaryMod = nil
+    local maxCount = 0
+    for mod, count in pairs(modNames) do
+        if count > maxCount then
+            maxCount = count
+            primaryMod = mod
+        end
+    end
+    
+    -- Create a detailed prompt for the LLM
+    local prompt = string.format([[
+You are a Minecraft item analysis expert. Analyze these items to determine their common purpose or theme.
+
+ITEMS IN BARREL:
+%s
+
+TASK:
+Determine what these items have in common and suggest a clear category name for them.
+
+ANALYSIS POINTS:
+1. Material type (wood, stone, metal, etc.)
+2. Item function (tool, weapon, decoration, etc.)
+3. Game mechanic (redstone, farming, brewing, etc.)
+4. Mod association (%s)
+5. Crafting relationships
+6. Common usage in gameplay
+
+RESPONSE FORMAT:
+Return a JSON object with these fields:
+{
+  "category": "suggested_category_name",
+  "description": "Brief description of what these items have in common",
+  "suggested_items": ["item1", "item2", "item3"]
+}
+
+The category should be a simple, lowercase term with underscores (e.g., "building_blocks", "farming_tools").
+Suggested items should be 3-5 other items that would logically belong in this barrel.
+]], table.concat(displayNames, "\n"), primaryMod or "unknown")
+
+    local response = llm.getGeminiResponse(prompt)
+    if not response then return nil end
+    
+    -- Try to parse the JSON response
+    local success, analysisData = pcall(textutils.unserializeJSON, response)
+    if success and analysisData then
+        return analysisData
+    else
+        -- If JSON parsing fails, try to extract just the category
+        local category = response:match('"category"%s*:%s*"([^"]+)"')
+        if category then
+            return {
+                category = category,
+                description = "Extracted from partial response",
+                suggested_items = {}
+            }
+        end
+    end
+    
+    return nil
+end
+
+-- Modify scanBarrels to use the intelligent analysis
 function sortingTurtle.scanBarrels()
     print("\n=== Starting Barrel Scan ===")
     sortingTurtle.barrels = {}
@@ -1247,6 +1616,17 @@ function sortingTurtle.scanBarrels()
                         contents = contents,
                         blockData = data
                     }
+                    
+                    -- If barrel has contents, analyze them intelligently
+                    if not contents.isEmpty then
+                        print("Analyzing barrel contents...")
+                        barrelInfo.analysis = sortingTurtle.analyzeBarrelContentsIntelligently(barrelInfo)
+                        if barrelInfo.analysis then
+                            print(string.format("Analysis: %s - %s", 
+                                barrelInfo.analysis.category,
+                                barrelInfo.analysis.description))
+                        end
+                    end
                     
                     table.insert(sortingTurtle.barrels, barrelInfo)
                     sortingTurtle.numBarrels = sortingTurtle.numBarrels + 1
@@ -1309,6 +1689,43 @@ function sortingTurtle.scanBarrels()
             else
                 print("Error: Could not define categories!")
                 return
+            end
+        end
+        
+        -- Use barrel analysis to inform category assignments
+        local suggestedCategories = {}
+        for i, barrel in ipairs(sortingTurtle.barrels) do
+            if barrel.analysis and barrel.analysis.category then
+                -- Check if this is a new category we should consider
+                local category = barrel.analysis.category
+                if not suggestedCategories[category] then
+                    -- Check if it's similar to an existing category
+                    local isSimilar = false
+                    for existingCategory, _ in pairs(suggestedCategories) do
+                        -- Simple similarity check - could be improved
+                        if string.find(category, existingCategory) or 
+                           string.find(existingCategory, category) then
+                            isSimilar = true
+                            break
+                        end
+                    end
+                    
+                    if not isSimilar then
+                        suggestedCategories[category] = {
+                            description = barrel.analysis.description,
+                            barrelNum = i
+                        }
+                    end
+                end
+            end
+        end
+        
+        -- Print suggested categories from barrel analysis
+        if next(suggestedCategories) ~= nil then
+            print("\nSuggested categories from barrel analysis:")
+            for category, info in pairs(suggestedCategories) do
+                print(string.format("- %s: %s (Barrel %d)", 
+                    category, info.description, info.barrelNum))
             end
         end
         
