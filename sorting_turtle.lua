@@ -877,14 +877,12 @@ Define up to 30 logical Minecraft item categories that would make sense for sort
 IMPORTANT CATEGORIZATION GUIDELINES:
 - Focus on the actual item types found in the scan above - be adaptive
 - Create categories based on what makes sense for sorting these specific items
-- Don't create overly generic categories if more specific ones would work better
-- You MAY create separate categories for similar materials (stone vs. cobblestone) OR group them together - decide based on what makes sense for the specific items found
-- You MAY create separate categories for similar wood items OR group them together - decide based on what makes sense for the specific items found
+- Avoid creating a generic "building_blocks" category - instead create more specific categories like "stone_blocks", "wooden_planks", "wooden_logs", "decorative_blocks", etc.
 - Create a balanced system that makes practical sense for a Minecraft player
 
 REQUIREMENTS:
 1. The list MUST start with "unknown" as the first category
-2. Use specific, descriptive category names (1-3 words, lowercase with underscores)
+2. Use specific, descriptive category names (1-5 words, lowercase with underscores)
 3. Categories should be based on item properties, function, or usage patterns
 4. You can create up to 30 categories (including "unknown")
 5. Analyze the actual items from the scan to determine the best categorization system
@@ -894,10 +892,18 @@ Return ONLY the category names, one per line.
 No numbers, explanations, or additional text.
 Example format:
 unknown
+dirt_blocks
 stone_blocks
 wooden_blocks
+logs
+seeds
+foraging
+mob_drops
+monster_drops
+unique_items
+nether_items
 ores
-farming_items
+natural_resources
 etc.
 ]], itemsList)
 
@@ -935,39 +941,7 @@ etc.
         }
     end
     
-    -- Check if "building_blocks" is in the categories and replace it with more specific categories
-    for i, category in ipairs(sortingTurtle.categories) do
-        if category == "building_blocks" then
-            print("Found 'building_blocks' category, replacing with more specific categories")
-            -- Remove the building_blocks category
-            table.remove(sortingTurtle.categories, i)
-            -- Add more specific categories if they don't already exist
-            local specificCategories = {
-                "stone_blocks", 
-                "cobblestone",
-                "dirt_blocks",
-                "wooden_planks",
-                "wooden_logs",
-                "decorative_blocks"
-            }
-            for _, specificCat in ipairs(specificCategories) do
-                local exists = false
-                for _, existingCat in ipairs(sortingTurtle.categories) do
-                    if existingCat == specificCat then
-                        exists = true
-                        break
-                    end
-                end
-                if not exists then
-                    table.insert(sortingTurtle.categories, i, specificCat)
-                    i = i + 1
-                end
-            end
-            break
-        end
-    end
-    
-    -- Ensure unknown is first category and problematic_items is last
+    -- Ensure unknown is first category
     local hasUnknown = false
     
     for _, category in ipairs(sortingTurtle.categories) do
@@ -979,15 +953,12 @@ etc.
         table.insert(sortingTurtle.categories, 1, "unknown")
     end
     
-    -- Ensure we have at least one category
-    if #sortingTurtle.categories < 1 then
-        sortingTurtle.categories = {"unknown"}
-    end
-    
-    print("\nDefined categories:")
+    -- Display final categories
+    print("\nFinal categories:")
     for _, category in ipairs(sortingTurtle.categories) do
         print("- " .. category)
     end
+    
     return true
 end
 
@@ -1115,14 +1086,6 @@ etc.
     -- Ensure first barrel is assigned to unknown
     if #assignments > 0 then
         assignments[1] = "unknown"
-    end
-    
-    -- Check for "building_blocks" assignments and replace them
-    for i, category in ipairs(assignments) do
-        if category == "building_blocks" then
-            print(string.format("WARNING: Barrel %d assigned to 'building_blocks', changing to 'stone_blocks'", i))
-            assignments[i] = "stone_blocks"
-        end
     end
     
     -- Verify all assignments are valid categories
@@ -1399,7 +1362,9 @@ DETAILED ITEM INFORMATION:
 %s
 
 TASK:
-Determine what these items have in common and suggest a clear category name and description.
+1. ANALYZE these items - use your knowledge of Minecraft and also search the internet/wiki for information about these items.
+2. Research their common properties, uses, and how they relate to each other.
+3. Determine what these items have in common and suggest a clear category name and description.
 
 CONSIDERATIONS:
 1. How are these items related in Minecraft gameplay?
@@ -1408,6 +1373,10 @@ CONSIDERATIONS:
 4. Are they typically used together by players?
 5. Do they belong to a specific Minecraft system (redstone, farming, etc.)?
 6. How would you label this barrel for a player to easily find these items?
+
+IMPORTANT CATEGORY GUIDELINES:
+- NEVER suggest "building_blocks" as a category
+- Choose specific, descriptive category names that clearly indicate the contents
 
 RESPONSE FORMAT:
 Return a JSON object with these fields:
@@ -1419,7 +1388,7 @@ Return a JSON object with these fields:
   "organization_tip": "Suggestion for how to organize these items in a storage system"
 }
 
-The category must be a simple, lowercase term with underscores (e.g., "building_blocks", "farming_tools").
+The category must be a simple, lowercase term with underscores (e.g., "stone_blocks", "farming_tools").
 Suggested items should be 3-5 other items that would logically belong in this barrel.
 ]], table.concat(displayNames, "\n"), primaryMod or "unknown", primaryType or "unknown", itemDetailsList)
 
@@ -1995,7 +1964,7 @@ function sortingTurtle.getBarrelSlot(itemName, itemDisplayName)
             -- Generate a prompt for this specific item
             local categoriesText = table.concat(sortingTurtle.categories, "\n")
             local prompt = string.format([[
-You are a Minecraft storage system expert. Categorize this item into the most appropriate category.
+You are a Minecraft item categorization expert who organizes storage systems. 
 
 ITEM DETAILS:
 Full Name: %s
@@ -2005,15 +1974,18 @@ AVAILABLE CATEGORIES:
 %s
 
 TASK:
-Choose the MOST appropriate category for this item from the available categories list.
-Your goal is to place this item in the category where a player would most likely look for it.
+1. ANALYZE this Minecraft item - you should use your knowledge of Minecraft and also search the internet/wiki for information about this item.
+2. Consider what the item is used for, what materials it's made from, and how players typically organize it.
+3. Choose the MOST appropriate category for this item from the available categories list.
+4. Your goal is to place this item in the category where a player would most likely look for it.
 
 CATEGORIZATION GUIDELINES:
+- Research the item on the Minecraft Wiki if needed to understand its properties and usage
 - Consider the item's material, function, and appearance
 - Match with similar items that would logically be stored together
 - Choose the most specific applicable category if multiple categories could work
 - Consider how a player would organize their storage system
-- If unsure, use the 'unknown' category
+- If unsure after research, use the 'unknown' category
 
 RESPONSE FORMAT:
 Return ONLY the category name, nothing else, chosen from the AVAILABLE CATEGORIES list.
