@@ -187,15 +187,8 @@ end
 function sortingTurtle.getItemCategory(itemName)
     if not itemName then return "unknown" end
     
-    -- Convert itemName to lowercase for case-insensitive matching
-    itemName = string.lower(itemName)
-    
-    -- Extract mod prefix and base name
-    local modPrefix, baseName = itemName:match("^([^:]+):(.+)$")
-    if not modPrefix then return "unknown" end
-    
-    -- Just return the mod prefix and base name for the LLM to handle categorization
-    return modPrefix .. "_" .. baseName
+    -- Just return the full item name for the LLM to handle categorization
+    return itemName
 end
 
 -- Function to check and maintain fuel levels
@@ -709,6 +702,7 @@ function sortingTurtle.analyzeBulkBarrels()
     
     -- Create a detailed context of all barrels and their contents
     local barrelContext = "Current barrel setup:\n"
+    
     for i, barrel in ipairs(sortingTurtle.barrels) do
         barrelContext = barrelContext .. string.format("\nBarrel %d:", i)
         if barrel.contents.isEmpty then
@@ -716,21 +710,13 @@ function sortingTurtle.analyzeBulkBarrels()
         else
             barrelContext = barrelContext .. "\nContains:"
             for _, item in ipairs(barrel.contents.items) do
-                -- Extract more detailed information
-                local modName = item.name:match("^([^:]+):") or "unknown"
-                local itemType = item.name:match("^[^:]+:([^_]+)") or "unknown"
-                local itemMaterial = item.name:match("_([^_]+)$") or ""
-                
-                barrelContext = barrelContext .. string.format("\n- %s (%s) [Mod: %s, Type: %s, Material: %s]", 
+                barrelContext = barrelContext .. string.format("\n- %s (%s)", 
                     item.displayName or item.name,
-                    item.name,
-                    modName,
-                    itemType,
-                    itemMaterial)
-            end
+                    item.name)
             end
         end
-        
+    end
+    
     -- Create a structured analysis prompt
     local prompt = string.format([[
 You are a Minecraft storage system analyzer. Your task is to analyze this storage system and output a STRICT JSON response.
@@ -2148,11 +2134,8 @@ function sortingTurtle.getBarrelSlot(itemName, itemDisplayName)
 You are a Minecraft storage system expert. Categorize this item into the most appropriate category.
 
 ITEM DETAILS:
-Name: %s
+Full Name: %s
 Display Name: %s
-Mod: %s
-Item Type: %s
-Item Subtype: %s
 
 AVAILABLE CATEGORIES:
 %s
@@ -2162,6 +2145,8 @@ Choose the MOST appropriate category for this item from the available categories
 
 MINECRAFT CATEGORIZATION RULES:
 - Items from the same mod often belong together
+- Common blocks like dirt, stone, cobblestone go in stone_materials
+- Wooden planks, logs, and sticks go in wood_materials
 - Items with similar crafting recipes or usage should go together
 - The item's name often gives clues about its purpose
 - Consider both material type and function
@@ -2173,9 +2158,6 @@ Return ONLY the category name, nothing else, chosen from the AVAILABLE CATEGORIE
 ]], 
             itemName,
             itemDisplayName or itemName,
-            modName,
-            itemType,
-            itemSubtype,
             categoriesText)
         
         print("Requesting category for individual item...")
@@ -2233,26 +2215,20 @@ function sortingTurtle.batchCategorizeItems()
     
     -- Create a list of all uncategorized items
     local itemsList = ""
-    local itemsToProcess = {}
+    local itemCount = 0
     
     for itemName, itemData in pairs(sortingTurtle.uncategorizedItems) do
-        table.insert(itemsToProcess, itemData)
-        
-        -- Extract detailed item information
-        local modName = itemName:match("^([^:]+):") or "unknown"
-        local itemType = itemName:match("^[^:]+:([^_]+)") or "unknown"
-        local itemMaterial = itemName:match("_([^_]+)$") or ""
-        
-        itemsList = itemsList .. string.format("\nItem: %s (%s)\n", 
-            itemData.displayName, itemName)
-        itemsList = itemsList .. string.format("- Mod: %s\n", modName)
-        itemsList = itemsList .. string.format("- Type: %s\n", itemType)
-        if itemMaterial ~= "" then
-            itemsList = itemsList .. string.format("- Material: %s\n", itemMaterial)
-        end
+        -- Add this item to the list
+        itemsList = itemsList .. string.format("\n%s (%s)", 
+            itemData.displayName or itemName,
+            itemName)
+        itemCount = itemCount + 1
     end
     
-    -- Create a batch categorization prompt
+    -- Only proceed if we have items to categorize
+    if itemCount == 0 then return end
+    
+    -- Determine which category these items belong to
     local categoriesText = table.concat(sortingTurtle.categories, "\n")
     local prompt = string.format([[
 You are a Minecraft storage system expert. Categorize these items into their most appropriate categories.
@@ -2264,38 +2240,29 @@ AVAILABLE CATEGORIES:
 %s
 
 TASK:
-Assign EACH item to the MOST appropriate category from the available categories list.
+For each item, choose the MOST appropriate category from the available categories list.
 
 MINECRAFT CATEGORIZATION RULES:
 - Items from the same mod often belong together
+- Common blocks like dirt, stone, cobblestone go in stone_materials
+- Wooden planks, logs, and sticks go in wood_materials 
 - Items with similar crafting recipes or usage should go together
 - The item's name often gives clues about its purpose
 - Consider both material type and function
 - If unsure, use the 'unknown' category
 - For truly problematic items, use 'problematic_items' category
 
-IMPORTANT BLOCK CATEGORIZATION RULES:
-- DO NOT assign blocks to a general "building_blocks" category, even if it exists
-- Instead, categorize blocks by their specific material (stone_materials, wood_materials, etc.)
-- For decorative blocks, use decorative_blocks or more specific categories
-- Consider the block's function, appearance, and crafting materials
-- Group blocks with their related crafting components where appropriate
-- For modded blocks, consider assigning to mod-specific categories
-
 RESPONSE FORMAT:
-Return a JSON array with category assignments for each item in this exact format:
+Return your answers in JSON format as an array of objects with 'item' and 'category' properties:
 [
-  {
-    "item": "item_name_exactly_as_given",
-    "category": "assigned_category"
-  }
+  {"item": "minecraft:dirt", "category": "stone_materials"},
+  {"item": "minecraft:oak_planks", "category": "wood_materials"}
 ]
-
-The category MUST be one from the AVAILABLE CATEGORIES list.
-ONLY return the JSON array, no explanation text.
-]], itemsList, categoriesText)
+]], 
+        itemsList,
+        categoriesText)
     
-    print("Requesting batch categorization for " .. #itemsToProcess .. " items...")
+    print("Requesting batch categorization for " .. itemCount .. " items...")
     local response = llm.getGeminiResponse(prompt)
     
     if not response then
