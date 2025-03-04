@@ -929,25 +929,9 @@ etc.
     
     -- Ensure we have at least some categories
     if #sortingTurtle.categories == 0 then
-        print("No valid categories found in response, using default categories")
+        print("No valid categories found in response, using only 'unknown' category")
         sortingTurtle.categories = {
-            "unknown", 
-            "stone_blocks", 
-            "cobblestone",
-            "dirt_blocks",
-            "wooden_planks",
-            "wooden_logs",
-            "decorative_blocks",
-            "crafting_materials",
-            "metal_ingots",
-            "redstone_components", 
-            "tools", 
-            "weapons",
-            "armor",
-            "food",
-            "farming",
-            "ores",
-            "saplings_flowers"
+            "unknown"
         }
     end
     
