@@ -719,12 +719,14 @@ function sortingTurtle.analyzeBulkBarrels()
                 -- Extract more detailed information
                 local modName = item.name:match("^([^:]+):") or "unknown"
                 local itemType = item.name:match("^[^:]+:([^_]+)") or "unknown"
+                local itemMaterial = item.name:match("_([^_]+)$") or ""
                 
-                barrelContext = barrelContext .. string.format("\n- %s (%s) [Mod: %s, Type: %s]", 
+                barrelContext = barrelContext .. string.format("\n- %s (%s) [Mod: %s, Type: %s, Material: %s]", 
                     item.displayName or item.name,
                     item.name,
                     modName,
-                    itemType)
+                    itemType,
+                    itemMaterial)
             end
         end
     end
@@ -744,11 +746,27 @@ Analysis Guidelines:
 4. Think about what players would logically look for together
 5. Identify mods present in the system and their typical item categories
 
-Example Relationships (but don't limit yourself to these):
-- Building materials that are commonly used together
+IMPORTANT - SPECIFIC CATEGORIZATION RULES:
+- DO NOT create a general "building_blocks" category as it's too broad
+- Instead, categorize blocks by specific material (stone_blocks, wooden_blocks, metal_blocks, etc.)
+- Or categorize by purpose (walls, floors, decorative_blocks, structural_blocks)
+- Or categorize by aesthetic theme (rustic_blocks, modern_blocks, fantasy_blocks)
+- Make distinctions between different block types (stairs, slabs, full blocks)
+- Consider color themes for decorative blocks (red_blocks, blue_blocks, etc.)
+- Group functionally similar blocks together (light_sources, containers, etc.)
+
+Example Specific Block Categories:
+- stone_materials (granite, diorite, andesite, stone, etc.)
+- wood_materials (oak, spruce, birch logs and planks)
+- colored_wool (wool blocks of various colors)
+- metal_materials (iron, gold, copper blocks)
+- decorative_stones (quartz, marble, etc.)
+- nether_materials (netherrack, nether bricks, etc.)
+- structural_components (stairs, slabs, walls of similar types)
+
+Example General Relationships:
 - Items that are part of the same crafting chain
 - Items used for similar purposes in-game
-- Blocks with similar textures or materials
 - Items from the same game mechanic or feature
 - Items from the same mod or mod system
 
@@ -767,7 +785,7 @@ You MUST return a valid JSON array in this EXACT format:
 Requirements:
 - "barrel" must be a number from 1 to %d
 - "purpose" must be a single line describing the barrel's contents and theme
-- "category" must be a simple lowercase term with underscores (e.g., "building_blocks")
+- "category" must be a simple lowercase term with underscores (e.g., "stone_materials" NOT "building_blocks")
 - "suggested_items" must list similar items that would fit well
 - "organization_tip" must provide one practical storage organization suggestion
 - Response must be valid JSON
@@ -834,8 +852,9 @@ function sortingTurtle.defineCategories()
     local itemsFound = {}
     local modsFound = {}
     local itemTypes = {}
+    local materials = {}
     
-    -- Collect all unique items, mods, and item types from barrels
+    -- Collect all unique items, mods, item types, and materials from barrels
     for _, barrel in ipairs(sortingTurtle.barrels) do
         if not barrel.contents.isEmpty then
             for _, item in ipairs(barrel.contents.items) do
@@ -852,6 +871,12 @@ function sortingTurtle.defineCategories()
                 if itemType then
                     itemTypes[itemType] = (itemTypes[itemType] or 0) + 1
                 end
+                
+                -- Extract material from name (often after last underscore)
+                local itemMaterial = item.name:match("_([^_]+)$")
+                if itemMaterial then
+                    materials[itemMaterial] = (materials[itemMaterial] or 0) + 1
+                end
             end
         end
     end
@@ -860,6 +885,7 @@ function sortingTurtle.defineCategories()
     local itemsList = ""
     local modsList = ""
     local typesList = ""
+    local materialsList = ""
     
     for name, displayName in pairs(itemsFound) do
         itemsList = itemsList .. "- " .. displayName .. " (" .. name .. ")\n"
@@ -873,13 +899,19 @@ function sortingTurtle.defineCategories()
         typesList = typesList .. "- " .. itype .. " (" .. count .. " items)\n"
     end
     
+    for material, count in pairs(materials) do
+        materialsList = materialsList .. "- " .. material .. " (" .. count .. " items)\n"
+    end
+    
     -- If no items found, use default categories
     if itemsList == "" then
         print("No items found in barrels, using default categories")
         sortingTurtle.categories = {
             "unknown",
-            "building_blocks",
-            "decoration",
+            "stone_materials",
+            "wood_materials",
+            "metal_materials",
+            "decorative_blocks",
             "redstone",
             "tools",
             "weapons",
@@ -913,21 +945,33 @@ These mods are detected:
 Common item types detected:
 %s
 
+Common materials detected:
+%s
+
 TASK:
 Define 10-15 logical Minecraft item categories that would make sense for sorting items into barrels.
 
 MINECRAFT-SPECIFIC CONSIDERATIONS:
 - Vanilla Minecraft groups items by material (wood, stone) and function (tools, weapons)
 - Redstone components are typically grouped together for circuit building
-- Blocks are often categorized by material type 
 - Items that are part of the same crafting progression should be grouped together
 - Consider mod-specific categories for mods with many unique items
-- Think about how players would naturally look for items when crafting/building
+
+IMPORTANT CATEGORIZATION RULES:
+- DO NOT create a general "building_blocks" category as it's too broad
+- Instead, create specific categories based on materials or block types:
+  * stone_materials, wood_materials, metal_materials, glass_blocks
+  * decorative_blocks, structural_components, colored_blocks
+  * raw_materials, processed_materials
+- Make distinctions between different block types (stairs, slabs, full blocks)
+- Create separate categories for different tool types (mining_tools, farming_tools)
+- Create specific categories for common Minecraft systems (redstone, brewing, enchanting)
+- Consider creating mod-specific categories when a mod has many unique items
 
 REQUIREMENTS:
 1. The list MUST start with "unknown" and end with "problematic_items" (these are required)
 2. Categories should follow Minecraft conventions for sorting items
-3. Use simple, descriptive category names (1-2 words, lowercase with underscores)
+3. Use specific, descriptive category names (1-3 words, lowercase with underscores)
 4. Categories should be specific enough to be useful but general enough to group related items
 5. Consider both item names and functionality when creating categories
 6. Include appropriate mod-specific categories when a mod has multiple related items
@@ -937,16 +981,16 @@ Return ONLY the category names, one per line.
 No numbers, explanations, or additional text.
 Example format:
 unknown
-building_blocks
-ores_minerals
-tools_weapons
+stone_materials
+wood_materials
+metal_materials
+decorative_blocks
 redstone
-food
-brewing
+tools
+farming
 mob_drops
-decorative
 problematic_items
-]], itemsList, modsList, typesList)
+]], itemsList, modsList, typesList, materialsList)
 
     print("Requesting categories based on environment analysis...")
     local response = llm.getGeminiResponse(prompt)
@@ -955,7 +999,9 @@ problematic_items
         print("Error: No response received, using default categories")
         sortingTurtle.categories = {
             "unknown", 
-            "building_blocks", 
+            "stone_materials", 
+            "wood_materials",
+            "metal_materials",
             "tools", 
             "redstone", 
             "food",
@@ -986,12 +1032,43 @@ problematic_items
         print("No valid categories found in response, using default categories")
         sortingTurtle.categories = {
             "unknown", 
-            "building_blocks", 
+            "stone_materials", 
+            "wood_materials",
+            "metal_materials",
             "tools", 
             "redstone", 
             "food",
             "problematic_items"
         }
+    end
+    
+    -- Check if "building_blocks" is in the categories and replace it with more specific categories
+    for i, category in ipairs(sortingTurtle.categories) do
+        if category == "building_blocks" then
+            print("Found 'building_blocks' category, replacing with more specific categories")
+            -- Remove the building_blocks category
+            table.remove(sortingTurtle.categories, i)
+            -- Add more specific categories if they don't already exist
+            local specificCategories = {
+                "stone_materials", 
+                "wood_materials", 
+                "decorative_blocks"
+            }
+            for _, specificCat in ipairs(specificCategories) do
+                local exists = false
+                for _, existingCat in ipairs(sortingTurtle.categories) do
+                    if existingCat == specificCat then
+                        exists = true
+                        break
+                    end
+                end
+                if not exists then
+                    table.insert(sortingTurtle.categories, i, specificCat)
+                    i = i + 1
+                end
+            end
+            break
+        end
     end
     
     -- Ensure unknown is first category and problematic_items is last
@@ -1046,12 +1123,14 @@ function sortingTurtle.assignBarrelCategories()
                 -- Extract mod name for better context
                 local modName = item.name:match("^([^:]+):") or "unknown"
                 local itemType = item.name:match("^[^:]+:([^_]+)") or "unknown"
+                local itemMaterial = item.name:match("_([^_]+)$") or ""
                 
-                barrelContext = barrelContext .. string.format("- %s (%s) [Mod: %s, Type: %s]\n", 
+                barrelContext = barrelContext .. string.format("- %s (%s) [Mod: %s, Type: %s, Material: %s]\n", 
                     item.displayName or item.name, 
                     item.name,
                     modName,
-                    itemType)
+                    itemType,
+                    itemMaterial)
             end
         end
     end
@@ -1093,22 +1172,34 @@ ASSIGNMENT RULES:
 6. If a barrel has mixed contents, choose the category that best represents the majority
 7. REQUIRED: Make sure at least one barrel is assigned to 'problematic_items'
 
+IMPORTANT BLOCK CATEGORIZATION RULES:
+- DO NOT assign barrels to a general "building_blocks" category, even if it exists
+- Instead, categorize blocks by their specific material:
+  * stone_materials (stone, cobblestone, andesite, etc.)
+  * wood_materials (wooden planks, logs, etc.)
+  * metal_materials (iron blocks, gold blocks, etc.)
+  * decorative_blocks (for aesthetic blocks)
+- Group blocks by their function, appearance, and material properties
+- For modded blocks, consider creating mod-specific categories
+- Prioritize material-based or function-based categories over general categories
+
 MINECRAFT KNOWLEDGE:
 - Group similar item types and materials together
 - Consider mod relationships (items from same mod often belong together)
 - Think about crafting progression and related items
 - Tools, weapons, and armor have different purposes despite similar materials
-- Building blocks are typically grouped by material type
 - Functional blocks should be grouped by their purpose
 
 RESPONSE FORMAT:
 Return ONLY category assignments, one per line, with exactly %d lines (one for each barrel).
 EXAMPLE OUTPUT for %d barrels:
 unknown
-building_blocks
-tools
+stone_materials
+wood_materials
+metal_materials
 redstone
 food
+farming
 problematic_items
 ]], barrelContext, categoriesText, sortingTurtle.numBarrels, sortingTurtle.numBarrels)
 
@@ -1155,6 +1246,14 @@ problematic_items
     -- Ensure first barrel is assigned to unknown
     if #assignments > 0 then
         assignments[1] = "unknown"
+    end
+    
+    -- Check for "building_blocks" assignments and replace them
+    for i, category in ipairs(assignments) do
+        if category == "building_blocks" then
+            print(string.format("WARNING: Barrel %d assigned to 'building_blocks', changing to 'stone_materials'", i))
+            assignments[i] = "stone_materials"
+        end
     end
     
     -- Ensure at least one barrel is assigned to problematic_items
@@ -1289,7 +1388,7 @@ function sortingTurtle.sortItems()
                         print("Stored in unknown barrel")
                     else
                         itemsSorted = itemsSorted + 1
-                        print(string.format("Stored in barrel %d", barrelSlot))
+                    print(string.format("Stored in barrel %d", barrelSlot))
                     end
                 else
                     print("Warning: Could not store item in barrel! Moving to unknown barrel instead.")
@@ -1737,18 +1836,18 @@ function sortingTurtle.scanBarrels()
                 end
             else
                 print("\nNo suggested categories from barrel analysis")
+        end
+        
+        -- Assign categories to barrels
+        print("\nAssigning categories to barrels...")
+        if sortingTurtle.assignBarrelCategories() then
+            print("Category assignment complete!")
+            -- Print category assignments
+            for barrel, category in pairs(sortingTurtle.barrelAssignments) do
+                print(string.format("Barrel %d: %s", barrel, category))
             end
-            
-            -- Assign categories to barrels
-            print("\nAssigning categories to barrels...")
-            if sortingTurtle.assignBarrelCategories() then
-                print("Category assignment complete!")
-                -- Print category assignments
-                for barrel, category in pairs(sortingTurtle.barrelAssignments) do
-                    print(string.format("Barrel %d: %s", barrel, category))
-                end
-            else
-                print("Warning: Could not assign categories to barrels")
+        else
+            print("Warning: Could not assign categories to barrels")
                 -- Emergency fallback - ensure at least unknown barrel exists
                 if sortingTurtle.numBarrels > 0 and next(sortingTurtle.barrelAssignments) == nil then
                     sortingTurtle.barrelAssignments = {}
@@ -2142,11 +2241,15 @@ function sortingTurtle.batchCategorizeItems()
         -- Extract detailed item information
         local modName = itemName:match("^([^:]+):") or "unknown"
         local itemType = itemName:match("^[^:]+:([^_]+)") or "unknown"
+        local itemMaterial = itemName:match("_([^_]+)$") or ""
         
         itemsList = itemsList .. string.format("\nItem: %s (%s)\n", 
             itemData.displayName, itemName)
         itemsList = itemsList .. string.format("- Mod: %s\n", modName)
         itemsList = itemsList .. string.format("- Type: %s\n", itemType)
+        if itemMaterial ~= "" then
+            itemsList = itemsList .. string.format("- Material: %s\n", itemMaterial)
+        end
     end
     
     -- Create a batch categorization prompt
@@ -2170,6 +2273,14 @@ MINECRAFT CATEGORIZATION RULES:
 - Consider both material type and function
 - If unsure, use the 'unknown' category
 - For truly problematic items, use 'problematic_items' category
+
+IMPORTANT BLOCK CATEGORIZATION RULES:
+- DO NOT assign blocks to a general "building_blocks" category, even if it exists
+- Instead, categorize blocks by their specific material (stone_materials, wood_materials, etc.)
+- For decorative blocks, use decorative_blocks or more specific categories
+- Consider the block's function, appearance, and crafting materials
+- Group blocks with their related crafting components where appropriate
+- For modded blocks, consider assigning to mod-specific categories
 
 RESPONSE FORMAT:
 Return a JSON array with category assignments for each item in this exact format:
@@ -2211,12 +2322,18 @@ ONLY return the JSON array, no explanation text.
                 end
                 
                 if isValidCategory then
-                    sortingTurtle.itemCategoryCache[assignment.item] = assignment.category
+                    -- Check if category is building_blocks and reject it
+                    if assignment.category == "building_blocks" then
+                        print(string.format("Rejected 'building_blocks' category for '%s', using 'unknown' instead", assignment.item))
+                        sortingTurtle.itemCategoryCache[assignment.item] = "unknown"
+                    else
+                        sortingTurtle.itemCategoryCache[assignment.item] = assignment.category
+                        print(string.format("Assigned '%s' to category '%s'", 
+                            assignment.item, assignment.category))
+                    end
                     -- Remove from uncategorized list
                     sortingTurtle.uncategorizedItems[assignment.item] = nil
                     validAssignments = validAssignments + 1
-                    print(string.format("Assigned '%s' to category '%s'", 
-                        assignment.item, assignment.category))
                 else
                     print(string.format("Skipping invalid category '%s' for item '%s'", 
                         assignment.category, assignment.item))
