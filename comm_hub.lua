@@ -14,6 +14,7 @@ local COLORS = {
     MESSAGE_OUT = colors.cyan,
     SYSTEM = colors.lightBlue,
     ERROR = colors.red,
+    SCROLL_MARKER = colors.gray,
 }
 
 -- App state
@@ -24,7 +25,13 @@ local app = {
     history = {},  -- Command history
     historyPos = 0,
     messageLog = {},  -- Log of all messages for display
+    scrollPos = 0,    -- Scroll position (0 = most recent)
+    termHeight = 0,   -- Terminal height (updated on init)
+    isScrolling = false, -- Whether we're in scrollback mode
 }
+
+-- Forward declarations
+local redrawTerminal, logMessage, resetScroll
 
 -- Device management
 local function addDevice(id, name, deviceType)
@@ -98,15 +105,20 @@ end
 
 -- Process messages from other devices
 local function processMessage(senderId, message)
+    -- Debug logging
+    logMessage("RECEIVED MESSAGE from ID " .. senderId .. " of type: " .. (message.type or "unknown"), "system")
+    
     if not message or not message.type then return end
     
     if message.type == "discovery_ping" then
         -- Respond to discovery
+        logMessage("Received discovery ping from ID " .. senderId, "system")
         modem.respondToDiscovery(senderId)
         -- Add device to list
         addDevice(senderId, message.name, message.device_type)
     elseif message.type == "discovery_response" then
         -- Add responding device
+        logMessage("Received discovery response from ID " .. senderId, "system")
         addDevice(senderId, message.name, message.device_type)
     elseif message.type == "message" then
         -- Add to conversation
@@ -166,6 +178,89 @@ local function processMessage(senderId, message)
     end
 end
 
+-- Terminal display functions
+local function drawScrollIndicator()
+    if #app.messageLog <= app.termHeight - 2 then return end
+    
+    -- Only show indicator if we have enough messages to scroll
+    local maxScroll = math.max(0, #app.messageLog - (app.termHeight - 2))
+    
+    if app.scrollPos > 0 then
+        local w, h = term.getSize()
+        term.setCursorPos(w, 1)
+        term.setTextColor(COLORS.SCROLL_MARKER)
+        term.write("↑")
+        
+        if app.scrollPos < maxScroll then
+            term.setCursorPos(w, h - 1)
+            term.write("↓")
+        end
+    end
+end
+
+-- Redraw the terminal with current scroll position
+function redrawTerminal()
+    -- Save cursor position
+    local oldX, oldY = term.getCursorPos()
+    
+    -- Clear the terminal
+    term.clear()
+    term.setCursorPos(1, 1)
+    
+    -- Calculate visible range from the log
+    local startIndex = math.max(1, #app.messageLog - (app.termHeight - 3) + 1 - app.scrollPos)
+    local endIndex = math.min(#app.messageLog, startIndex + app.termHeight - 3)
+    
+    -- Display visible messages
+    for i = startIndex, endIndex do
+        local msg = app.messageLog[i]
+        term.setTextColor(msg.color)
+        print("[" .. msg.timestamp .. "] " .. msg.text)
+    end
+    
+    -- Draw scroll indicators if needed
+    drawScrollIndicator()
+    
+    -- Draw input prompt
+    term.setCursorPos(1, app.termHeight - 1)
+    term.setTextColor(COLORS.TEXT)
+    
+    -- Show scrollback mode indicator
+    if app.isScrolling then
+        term.setTextColor(COLORS.SCROLL_MARKER)
+        print("-- SCROLLBACK MODE: Press ESC to exit, PageUp/PageDown to scroll --")
+        term.setTextColor(COLORS.TEXT)
+    end
+    
+    -- Restore cursor position for input
+    term.setCursorPos(oldX, oldY)
+end
+
+-- Scroll the terminal display
+local function scrollTerminal(amount)
+    local maxScroll = math.max(0, #app.messageLog - (app.termHeight - 3))
+    app.scrollPos = math.max(0, math.min(maxScroll, app.scrollPos + amount))
+    redrawTerminal()
+    
+    -- Enter scrolling mode if we're not at the bottom
+    if app.scrollPos > 0 then
+        app.isScrolling = true
+    else
+        app.isScrolling = false
+    end
+    
+    return true
+end
+
+-- Reset scroll position to bottom (most recent messages)
+function resetScroll()
+    if app.scrollPos > 0 then
+        app.scrollPos = 0
+        app.isScrolling = false
+        redrawTerminal()
+    end
+end
+
 -- Logging
 function logMessage(message, messageType)
     -- Get current time
@@ -181,6 +276,8 @@ function logMessage(message, messageType)
         color = COLORS.MESSAGE_IN
     elseif messageType == "outgoing" then
         color = COLORS.MESSAGE_OUT
+    elseif messageType == "title" then
+        color = COLORS.TITLE
     end
     
     -- Store in log
@@ -192,14 +289,15 @@ function logMessage(message, messageType)
     })
     
     -- Keep log size reasonable
-    if #app.messageLog > 100 then
+    if #app.messageLog > 500 then
         table.remove(app.messageLog, 1)
     end
     
-    -- Display immediately
-    term.setTextColor(color)
-    print("[" .. timestamp .. "] " .. message)
-    term.setTextColor(COLORS.TEXT)
+    -- If not in scrollback mode, auto-scroll to bottom and display
+    if not app.isScrolling then
+        -- Update the display with the new message
+        redrawTerminal()
+    end
 end
 
 -- List all connected devices
@@ -224,11 +322,8 @@ local function listDevices()
         return a.name < b.name
     end)
     
-    -- Print header
-    print()
-    term.setTextColor(COLORS.TITLE)
-    print("=== Connected Devices (" .. connectedCount .. "/" .. deviceCount .. ") ===")
-    term.setTextColor(COLORS.TEXT)
+    -- Log to message history instead of directly printing
+    logMessage("=== Connected Devices (" .. connectedCount .. "/" .. deviceCount .. ") ===", "system")
     
     -- Print each device
     for i, device in ipairs(sorted) do
@@ -237,44 +332,54 @@ local function listDevices()
             prefix = "> " -- Show which device is selected
         end
         
-        if device.connected then
-            term.setTextColor(COLORS.CONNECTED)
-        else
-            term.setTextColor(COLORS.DISCONNECTED)
-        end
-        
         local status = device.connected and "CONNECTED" or "DISCONNECTED"
-        print(prefix .. device.name .. " (ID: " .. device.id .. ") - " .. status .. " - Type: " .. device.type)
+        local deviceType = device.type and (" - Type: " .. device.type) or ""
+        
+        if device.connected then
+            logMessage(prefix .. device.name .. " (ID: " .. device.id .. ") - " .. status .. deviceType, "system")
+        else
+            logMessage(prefix .. device.name .. " (ID: " .. device.id .. ") - " .. status .. deviceType, "error")
+        end
     end
-    
-    term.setTextColor(COLORS.TEXT)
-    print()
 end
 
 -- Show help information
 local function showHelp()
-    term.setTextColor(COLORS.TITLE)
-    print("\n=== ComNet Hub Command Help ===")
-    term.setTextColor(COLORS.TEXT)
-    print("Commands:")
-    print("  /list             - List all connected devices")
-    print("  /select [id]      - Select a device by ID")
-    print("  /send [id] [msg]  - Send message to specific device")
-    print("  /scan             - Scan for devices")
-    print("  /name [id] [name] - Rename a device")
-    print("  /clear            - Clear message history")
-    print("  /status           - Show connection status")
-    print("  /help             - Show this help")
-    print("  /exit             - Exit application")
-    print("\nSending Messages:")
-    print("  - Type a message and press Enter to send to selected device")
-    print("  - Start message with ! to send a command to a turtle (e.g. !forward)")
-    print("  - Use /ping to check if a device is responding")
-    print()
+    local helpMessages = {
+        "=== ComNet Hub Command Help ===",
+        "Commands:",
+        "  /list             - List all connected devices",
+        "  /select [id]      - Select a device by ID",
+        "  /send [id] [msg]  - Send message to specific device",
+        "  /scan             - Scan for devices",
+        "  /name [id] [name] - Rename a device",
+        "  /clear            - Clear message history",
+        "  /status           - Show connection status",
+        "  /help             - Show this help",
+        "  /exit             - Exit application",
+        "",
+        "Scrolling:",
+        "  PageUp/PageDown   - Scroll through message history",
+        "  Home/End          - Jump to start/end of message history",
+        "  ESC               - Exit scrollback mode and return to bottom",
+        "",
+        "Sending Messages:",
+        "  - Type a message and press Enter to send to selected device",
+        "  - Start message with ! to send a command to a turtle (e.g. !forward)",
+        "  - Use /ping to check if a device is responding"
+    }
+    
+    -- Log each help line
+    for _, msg in ipairs(helpMessages) do
+        logMessage(msg, "system")
+    end
 end
 
 -- Process a command
 local function processCommand(input)
+    -- Reset scroll position when user enters a command
+    resetScroll()
+    
     if input:sub(1, 1) ~= "/" then
         -- Not a command, send as message to selected device
         if app.selected then
@@ -343,9 +448,12 @@ local function processCommand(input)
             logMessage("Usage: /name [device_id] [new_name]", "error")
         end
     elseif cmd == "clear" then
-        term.clear()
-        term.setCursorPos(1, 1)
-        logMessage("Terminal cleared", "system")
+        -- Clear message log
+        app.messageLog = {}
+        app.scrollPos = 0
+        app.isScrolling = false
+        redrawTerminal()
+        logMessage("Message history cleared", "system")
     elseif cmd == "status" then
         local deviceCount = 0
         local connectedCount = 0
@@ -378,12 +486,54 @@ local function processCommand(input)
     end
 end
 
+-- Handle keyboard events during scrollback mode
+local function handleScrollKeys()
+    local event, key = os.pullEvent("key")
+    
+    if key == keys.pageUp then
+        -- Scroll up one page
+        scrollTerminal(app.termHeight - 4)
+        return true
+    elseif key == keys.pageDown then
+        -- Scroll down one page
+        scrollTerminal(-(app.termHeight - 4))
+        return true
+    elseif key == keys.home then
+        -- Scroll to top
+        local maxScroll = math.max(0, #app.messageLog - (app.termHeight - 3))
+        scrollTerminal(maxScroll)
+        return true
+    elseif key == keys.up then
+        -- Scroll up one line
+        scrollTerminal(1)
+        return true
+    elseif key == keys.down then
+        -- Scroll down one line
+        scrollTerminal(-1)
+        return true
+    elseif key == keys["end"] then
+        -- Scroll to bottom (most recent)
+        resetScroll()
+        return true
+    elseif key == keys.escape then
+        -- Exit scrollback mode
+        resetScroll()
+        return false
+    end
+    
+    return true
+end
+
 -- Initialize app
 local function initialize()
     -- Initialize modem first
     if not modem.init() then
         error("Failed to initialize modem")
     end
+    
+    -- Get terminal dimensions
+    local w, h = term.getSize()
+    app.termHeight = h
     
     -- Send initial discovery ping
     modem.broadcastDiscovery()
@@ -392,24 +542,143 @@ local function initialize()
     term.clear()
     term.setCursorPos(1, 1)
     
-    term.setTextColor(COLORS.TITLE)
-    print("========================================")
-    print("         ComNet Hub Terminal v1.0       ")
-    print("========================================")
-    term.setTextColor(COLORS.TEXT)
-    print("Hub ID: " .. modem.deviceID)
-    print("Type /help for a list of commands")
-    print("Scanning for devices...")
+    -- Add welcome messages to log
+    logMessage("========================================", "title")
+    logMessage("         ComNet Hub Terminal v1.1       ", "title")
+    logMessage("========================================", "title")
+    logMessage("Hub ID: " .. modem.deviceID, "system")
+    logMessage("Type /help for a list of commands", "system")
+    logMessage("Use PageUp/PageDown to scroll message history", "system")
+    logMessage("Scanning for devices...", "system")
     
     return true
 end
 
 -- Read user input (with history support)
 local function readInput()
+    term.setCursorPos(1, app.termHeight - 1)
     term.setTextColor(COLORS.TEXT)
     write("> ")
     
-    local input = read(nil, app.history)
+    -- Create a custom event loop to handle scroll keys during input
+    local input = ""
+    local pos = 1
+    local historyPos = #app.history + 1
+    local w, h = term.getSize()
+    
+    -- Draw the cursor
+    term.setCursorPos(1 + pos, app.termHeight - 1)
+    term.setCursorBlink(true)
+    
+    while true do
+        local event, param1, param2, param3 = os.pullEvent()
+        
+        if event == "key" then
+            if param1 == keys.enter then
+                -- Submit input
+                term.setCursorBlink(false)
+                print() -- Move to next line
+                break
+                
+            elseif param1 == keys.backspace then
+                -- Delete character
+                if pos > 1 then
+                    input = input:sub(1, pos - 2) .. input:sub(pos)
+                    pos = pos - 1
+                    term.setCursorPos(1, app.termHeight - 1)
+                    term.write("> " .. input .. " ") -- Clear any trailing character
+                    term.setCursorPos(1 + pos, app.termHeight - 1)
+                end
+                
+            elseif param1 == keys.left then
+                -- Move cursor left
+                if pos > 1 then
+                    pos = pos - 1
+                    term.setCursorPos(1 + pos, app.termHeight - 1)
+                end
+                
+            elseif param1 == keys.right then
+                -- Move cursor right
+                if pos <= #input then
+                    pos = pos + 1
+                    term.setCursorPos(1 + pos, app.termHeight - 1)
+                end
+                
+            elseif param1 == keys.up then
+                -- Previous command in history
+                if historyPos > 1 then
+                    historyPos = historyPos - 1
+                    input = app.history[historyPos]
+                    pos = #input + 1
+                    term.setCursorPos(1, app.termHeight - 1)
+                    term.write("> " .. input .. string.rep(" ", w - #input - 2))
+                    term.setCursorPos(1 + pos, app.termHeight - 1)
+                end
+                
+            elseif param1 == keys.down then
+                -- Next command in history
+                if historyPos < #app.history then
+                    historyPos = historyPos + 1
+                    input = app.history[historyPos]
+                else
+                    historyPos = #app.history + 1
+                    input = ""
+                end
+                pos = #input + 1
+                term.setCursorPos(1, app.termHeight - 1)
+                term.write("> " .. input .. string.rep(" ", w - #input - 2))
+                term.setCursorPos(1 + pos, app.termHeight - 1)
+                
+            elseif param1 == keys.home then
+                -- Move to start of input
+                pos = 1
+                term.setCursorPos(1 + pos, app.termHeight - 1)
+                
+            elseif param1 == keys.pageUp then
+                -- Enter scrollback mode if we have content
+                if #app.messageLog > app.termHeight - 3 then
+                    term.setCursorBlink(false)
+                    app.isScrolling = true
+                    scrollTerminal(app.termHeight - 4)
+                    
+                    -- Handle scroll mode
+                    while app.isScrolling do
+                        if not handleScrollKeys() then break end
+                    end
+                    
+                    -- Restore input prompt
+                    term.setCursorPos(1, app.termHeight - 1)
+                    term.write("> " .. input)
+                    term.setCursorPos(1 + pos, app.termHeight - 1)
+                    term.setCursorBlink(true)
+                end
+                
+            elseif param1 == keys["end"] then
+                -- Move to end of input
+                pos = #input + 1
+                term.setCursorPos(1 + pos, app.termHeight - 1)
+            end
+            
+        elseif event == "char" then
+            -- Add character to input
+            input = input:sub(1, pos - 1) .. param1 .. input:sub(pos)
+            pos = pos + 1
+            term.setCursorPos(1, app.termHeight - 1)
+            term.write("> " .. input)
+            term.setCursorPos(1 + pos, app.termHeight - 1)
+            
+        elseif event == "term_resize" then
+            -- Terminal was resized
+            w, h = term.getSize()
+            app.termHeight = h
+            redrawTerminal()
+            
+            -- Redraw input
+            term.setCursorPos(1, app.termHeight - 1)
+            term.write("> " .. input)
+            term.setCursorPos(1 + pos, app.termHeight - 1)
+        end
+    end
     
     -- Add to history if not empty and not a duplicate of the last command
     if input ~= "" and (app.historyPos == 0 or input ~= app.history[app.historyPos]) then
@@ -445,6 +714,7 @@ local function mainLoop()
                 
                 -- Send periodic discovery pings
                 if os.time() - modem.lastPingTime > 30 then
+                    logMessage("Broadcasting discovery ping...", "system")
                     modem.broadcastDiscovery()
                 end
                 

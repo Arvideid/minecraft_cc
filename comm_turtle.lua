@@ -246,10 +246,14 @@ end
 
 -- Process incoming messages
 function processMessage(senderId, message)
+    -- Debug message processing
+    print("Processing message from " .. senderId .. " of type: " .. (message.type or "unknown"))
+    
     if not message or not message.type then return end
     
     if message.type == "discovery_ping" then
         -- Respond to discovery ping
+        print("Received discovery ping from " .. senderId)
         modem.respondToDiscovery(senderId)
         -- Update hub if this is from our hub
         if state.hubID == senderId then
@@ -356,15 +360,19 @@ local function mainLoop()
             modem.broadcastDiscovery()
         end
         
-        -- Listen for events
-        local event = {os.pullEvent()}
+        -- Listen for events with a timeout to keep the main loop responsive
+        local event, param1, param2, param3, param4 = os.pullEvent(0.5)
         
-        if event[1] == "rednet_message" then
-            local senderId, message, protocol = event[2], event[3], event[4]
+        if event == "rednet_message" then
+            local senderId, message, protocol = param1, param2, param3
+            
+            -- Debug received message
+            print("Received rednet message from " .. senderId .. " with protocol: " .. tostring(protocol))
+            
             if protocol == modem.config.PROTOCOL then
                 processMessage(senderId, message)
             end
-        elseif event[1] == "key" and event[2] == keys.q and event[3] then
+        elseif event == "key" and param1 == keys.q and keyboard.isKeyDown(keys.leftCtrl) then
             -- Allow termination with Ctrl+Q
             print("Terminating ComNet Turtle...")
             state.running = false
@@ -378,6 +386,10 @@ local function main()
         print("Failed to initialize the application. Exiting.")
         return
     end
+    
+    -- Print debug information
+    print("Protocol: " .. modem.config.PROTOCOL)
+    print("Device ID: " .. modem.deviceID)
     
     -- Run the main event loop
     mainLoop()
