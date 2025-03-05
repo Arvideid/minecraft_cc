@@ -61,37 +61,6 @@ local ui = {
     }
 }
 
--- Initialize the application
-local function initialize()
-    -- Get terminal dimensions
-    ui.width, ui.height = term.getSize()
-    
-    -- Calculate panel heights
-    ui.deviceList.height = ui.height - 6
-    ui.messagePanel.width = ui.width - ui.deviceList.width - 3
-    ui.messagePanel.height = ui.height - 8
-    ui.statusBar.y = ui.height - 2
-    ui.inputBar.y = ui.height - 3
-    
-    -- Find modem
-    local modems = {peripheral.find("modem", function(name, modem) return modem.isWireless() end)}
-    if #modems == 0 then
-        error("No wireless modem found. Please attach a wireless modem.")
-    end
-    state.modem = modems[1]
-    
-    -- Open channels
-    state.modem.open(CONFIG.CHANNELS.BROADCAST)
-    state.modem.open(CONFIG.CHANNELS.DISCOVERY)
-    
-    -- Start rednet
-    local modemSide = peripheral.getName(state.modem)
-    rednet.open(modemSide)
-    
-    -- Send initial discovery ping
-    sendDiscoveryPing()
-end
-
 -- Device management functions
 local function addDevice(id, name, deviceType, distance)
     if not state.devices[id] then
@@ -152,6 +121,7 @@ local function sendMessage(deviceId, message)
     return false
 end
 
+-- Move this function BEFORE initialize
 local function sendDiscoveryPing()
     rednet.broadcast({
         type = "discovery_ping",
@@ -172,6 +142,37 @@ local function respondToDiscovery(senderId)
         computer_type = "computer",
         protocol = CONFIG.PROTOCOL,
     }, CONFIG.PROTOCOL)
+end
+
+-- Initialize the application
+local function initialize()
+    -- Get terminal dimensions
+    ui.width, ui.height = term.getSize()
+    
+    -- Calculate panel heights
+    ui.deviceList.height = ui.height - 6
+    ui.messagePanel.width = ui.width - ui.deviceList.width - 3
+    ui.messagePanel.height = ui.height - 8
+    ui.statusBar.y = ui.height - 2
+    ui.inputBar.y = ui.height - 3
+    
+    -- Find modem
+    local modems = {peripheral.find("modem", function(name, modem) return modem.isWireless() end)}
+    if #modems == 0 then
+        error("No wireless modem found. Please attach a wireless modem.")
+    end
+    state.modem = modems[1]
+    
+    -- Open channels
+    state.modem.open(CONFIG.CHANNELS.BROADCAST)
+    state.modem.open(CONFIG.CHANNELS.DISCOVERY)
+    
+    -- Start rednet
+    local modemSide = peripheral.getName(state.modem)
+    rednet.open(modemSide)
+    
+    -- Send initial discovery ping
+    sendDiscoveryPing()
 end
 
 -- UI Drawing functions
