@@ -3,7 +3,7 @@
 
 -- Load the modem control module
 local modem = require("modem_control")
-local scroll = require("scroll_window")
+local scroll_window = require("scroll_window")
 
 -- Color settings
 local COLORS = {
@@ -262,7 +262,7 @@ local function showHelp()
         "  /exit             - Exit application",
         "",
         "Scrolling:",
-        "  PageUp/PageDown   - Scroll through message history",
+        "  Use the scroll wheel to navigate through message history",
         "",
         "Sending Messages:",
         "  - Type a message and press Enter to send to selected device",
@@ -351,7 +351,7 @@ local function processCommand(input)
         term.setCursorPos(1, 1)
         
         -- Reinitialize scroll window
-        app.terminal = scroll.create(term.current())
+        app.terminal = scroll_window.create(term.current())
         app.terminal.setMaxScrollback(500)
         
         logMessage("Terminal cleared", "system")
@@ -399,7 +399,7 @@ local function initialize()
     term.setCursorPos(1, 1)
     
     -- Initialize scroll window
-    app.terminal = scroll.create(term.current())
+    app.terminal = scroll_window.create(term.current())
     app.terminal.setMaxScrollback(500)  -- Store 500 lines of history
     
     -- Send initial discovery ping
@@ -411,7 +411,7 @@ local function initialize()
     logMessage("========================================", "title")
     logMessage("Hub ID: " .. modem.deviceID, "system")
     logMessage("Type /help for a list of commands", "system")
-    logMessage("Use PageUp/PageDown to scroll message history", "system")
+    logMessage("Use mouse wheel to scroll message history", "system")
     logMessage("Scanning for devices...", "system")
     
     return true
@@ -457,29 +457,6 @@ local function readInput()
     return input
 end
 
--- Handle key events that should be processed during normal operation
-local function handleKeyEvent(event)
-    if type(event) ~= "table" or #event < 2 then
-        return false
-    end
-    
-    local event_type, key = event[1], event[2]
-    
-    if event_type == "key" then
-        if key == keys.pageUp then
-            -- Scroll up one page
-            app.terminal.scroll(1)
-            return true
-        elseif key == keys.pageDown then
-            -- Scroll down one page
-            app.terminal.scroll(-1)
-            return true
-        end
-    end
-    
-    return false
-end
-
 -- Main event loop
 local function mainLoop()
     -- Network handling function
@@ -508,22 +485,34 @@ local function mainLoop()
     -- Input handling function
     local function inputTask()
         while app.running do
-            -- Check for events
-            local event = table.pack(os.pullEvent())
+            -- Process regular input
+            local input = readInput()
+            if input and #input > 0 then
+                processCommand(input)
+            end
             
-            -- Let the scroll handler manage PageUp/PageDown
-            if not handleKeyEvent(event) then
-                -- Process regular input
-                local input = readInput()
-                if input and #input > 0 then
-                    processCommand(input)
-                end
+            -- Make sure terminal UI is up to date
+            if app.terminal then
+                app.terminal.draw(0)
             end
         end
     end
     
-    -- Run both tasks in parallel
-    parallel.waitForAny(networkTask, inputTask)
+    -- Mouse event handler for scroll wheel
+    local function mouseTask()
+        while app.running do
+            local event, button, x, y = os.pullEvent("mouse_scroll")
+            
+            -- Pass scroll events to the terminal
+            if app.terminal then
+                app.terminal.scroll(button) -- button will be 1 for up, -1 for down
+                app.terminal.draw(0)
+            end
+        end
+    end
+    
+    -- Run all tasks in parallel
+    parallel.waitForAny(networkTask, inputTask, mouseTask)
 end
 
 -- Main application entry point
