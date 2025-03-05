@@ -470,11 +470,3 @@ function create(original)
   redirect.clear()
   return redirect
 end
-
--- Create the module table to export
-local scroll_window = {
-  create = create
-}
-
--- Return the module
-return scroll_window

@@ -40,7 +40,6 @@ end
 
 -- Broadcast discovery ping to find other devices
 function modemControl.broadcastDiscovery()
-    print("Broadcasting discovery ping...")
     rednet.broadcast({
         type = "discovery_ping",
         sender = modemControl.deviceID,
@@ -56,7 +55,6 @@ end
 
 -- Send direct response to a discovery ping
 function modemControl.respondToDiscovery(targetID)
-    print("Responding to discovery from ID " .. targetID)
     rednet.send(targetID, {
         type = "discovery_response",
         sender = modemControl.deviceID,
@@ -71,12 +69,7 @@ end
 
 -- Send message to a specific device
 function modemControl.sendMessage(targetID, messageContent, messageType)
-    if not targetID then 
-        print("Error: No target ID provided for message")
-        return false 
-    end
-    
-    print("Sending " .. (messageType or "message") .. " to ID " .. targetID)
+    if not targetID then return false end
     
     return rednet.send(targetID, {
         type = messageType or "message",
@@ -89,16 +82,9 @@ end
 
 -- Wait for and receive a message, with optional timeout
 function modemControl.receiveMessage(timeout)
-    print("Waiting for message with timeout " .. (timeout or "infinite"))
     local senderID, message, protocol = rednet.receive(modemControl.config.PROTOCOL, timeout)
     if senderID and message and protocol == modemControl.config.PROTOCOL and type(message) == "table" then
-        print("Received valid message from ID " .. senderID)
         return senderID, message
-    end
-    if senderID then
-        print("Received message with invalid format from ID " .. senderID)
-    else
-        print("No message received within timeout")
     end
     return nil, nil
 end

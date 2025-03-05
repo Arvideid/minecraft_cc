@@ -1,9 +1,10 @@
 -- comm_hub.lua
--- ComputerCraft Communication Hub with Simplified Terminal Interface
+-- ComputerCraft Communication Hub with Terminal Interface
 
 -- Load the modem control module
 local modem = require("modem_control")
-local scroll_window = require("scroll_window")
+-- Load the scroll window module
+local scrollWindow = require("scroll_window")
 
 -- Color settings
 local COLORS = {
@@ -15,6 +16,7 @@ local COLORS = {
     MESSAGE_OUT = colors.cyan,
     SYSTEM = colors.lightBlue,
     ERROR = colors.red,
+    SCROLL_MARKER = colors.gray,
 }
 
 -- App state
@@ -22,13 +24,15 @@ local app = {
     running = true,
     devices = {},
     selected = nil,
-    history = {},      -- Command history
+    history = {},  -- Command history
     historyPos = 0,
-    terminal = nil,    -- Scrollable terminal window
+    messageLog = {},  -- Log of all messages for display
+    window = nil,    -- Scroll window instance
+    isScrolling = false, -- Whether we're in scrollback mode
 }
 
 -- Forward declarations
-local logMessage
+local redrawTerminal, logMessage, resetScroll
 
 -- Device management
 local function addDevice(id, name, deviceType)
@@ -102,20 +106,15 @@ end
 
 -- Process messages from other devices
 local function processMessage(senderId, message)
-    -- Debug logging
-    logMessage("RECEIVED MESSAGE from ID " .. senderId .. " of type: " .. (message.type or "unknown"), "system")
-    
     if not message or not message.type then return end
     
     if message.type == "discovery_ping" then
         -- Respond to discovery
-        logMessage("Received discovery ping from ID " .. senderId, "system")
         modem.respondToDiscovery(senderId)
         -- Add device to list
         addDevice(senderId, message.name, message.device_type)
     elseif message.type == "discovery_response" then
         -- Add responding device
-        logMessage("Received discovery response from ID " .. senderId, "system")
         addDevice(senderId, message.name, message.device_type)
     elseif message.type == "message" then
         -- Add to conversation
@@ -138,6 +137,22 @@ local function processMessage(senderId, message)
         if message.content == "/ping" then
             sendMessageToDevice(senderId, "/ping_response")
         end
+    elseif message.type == "ping" then
+        -- Handle explicit ping type (fixing the ping issue)
+        if not app.devices[senderId] then
+            addDevice(senderId)
+        end
+        app.devices[senderId].lastSeen = os.time()
+        -- Send ping response
+        modem.sendMessage(senderId, "pong", "ping_response")
+        logMessage("Ping received from " .. app.devices[senderId].name, "system")
+    elseif message.type == "ping_response" then
+        -- Handle ping response
+        if not app.devices[senderId] then
+            addDevice(senderId)
+        end
+        app.devices[senderId].lastSeen = os.time()
+        logMessage("Ping response from " .. app.devices[senderId].name, "system")
     elseif message.type == "command_result" then
         -- Handle command result from turtle
         if not app.devices[senderId] then
@@ -175,11 +190,43 @@ local function processMessage(senderId, message)
     end
 end
 
--- Simplified logging function
-function logMessage(message, messageType)
-    -- Get current time
-    local timestamp = textutils.formatTime(os.time(), true)
+-- Terminal display functions using the scroll window
+function redrawTerminal()
+    app.window.clear()
     
+    -- Draw title
+    app.window.setCursorPos(1, 1)
+    app.window.setTextColour(COLORS.TITLE)
+    app.window.write("ComNet Hub Terminal v1.2 - Connected to " .. #app.devices .. " devices")
+    
+    -- Draw status line
+    local selectedName = app.selected and app.devices[app.selected] and app.devices[app.selected].name or "None"
+    app.window.setCursorPos(1, 2)
+    app.window.setTextColour(COLORS.SYSTEM)
+    app.window.write("Selected: " .. selectedName .. " | Type /help for commands")
+    
+    -- Draw separator
+    app.window.setCursorPos(1, 3)
+    app.window.setTextColour(COLORS.SCROLL_MARKER)
+    local w, _ = term.getSize()
+    app.window.write(string.rep("-", w))
+    
+    -- Reset cursor for input
+    app.window.setCursorPos(1, 4)
+    app.window.setTextColour(COLORS.TEXT)
+    
+    -- Draw the window to screen
+    app.window.draw()
+    
+    -- Draw input prompt on bottom line
+    local _, h = term.getSize()
+    term.setCursorPos(1, h)
+    term.setTextColour(COLORS.TEXT)
+    write("> ")
+end
+
+-- Log a message to the scroll window
+function logMessage(message, messageType)
     -- Choose color based on message type
     local color = COLORS.TEXT
     if messageType == "system" then
@@ -194,13 +241,37 @@ function logMessage(message, messageType)
         color = COLORS.TITLE
     end
     
-    -- Show in scrollable terminal
-    if app.terminal then
-        app.terminal.setTextColor(color)
-        app.terminal.write("[" .. timestamp .. "] ")
-        app.terminal.write(message)
-        app.terminal.write("\n")
+    -- Format timestamp
+    local timestamp = textutils.formatTime(os.time(), true)
+    local formattedMessage = "[" .. timestamp .. "] " .. message
+    
+    -- Store in message log for history
+    table.insert(app.messageLog, {
+        text = message,
+        timestamp = timestamp,
+        type = messageType,
+        color = color
+    })
+    
+    -- Keep log size reasonable
+    if #app.messageLog > 500 then
+        table.remove(app.messageLog, 1)
     end
+    
+    -- Write to scroll window
+    app.window.setTextColour(color)
+    app.window.setCursorPos(1, app.window.getCursorPos())
+    app.window.write(formattedMessage)
+    app.window.write("\n")
+    
+    -- Draw the window
+    app.window.draw()
+    
+    -- Draw input prompt on bottom line
+    local _, h = term.getSize()
+    term.setCursorPos(1, h)
+    term.setTextColour(COLORS.TEXT)
+    write("> ")
 end
 
 -- List all connected devices
@@ -225,7 +296,7 @@ local function listDevices()
         return a.name < b.name
     end)
     
-    -- Log to message history instead of directly printing
+    -- Log to message history
     logMessage("=== Connected Devices (" .. connectedCount .. "/" .. deviceCount .. ") ===", "system")
     
     -- Print each device
@@ -262,7 +333,10 @@ local function showHelp()
         "  /exit             - Exit application",
         "",
         "Scrolling:",
-        "  Use the scroll wheel to navigate through message history",
+        "  PageUp/PageDown   - Scroll through message history",
+        "  Up/Down           - Scroll line by line in scrollback mode",
+        "  Home/End          - Jump to start/end of message history",
+        "  ESC               - Exit scrollback mode and return to bottom",
         "",
         "Sending Messages:",
         "  - Type a message and press Enter to send to selected device",
@@ -346,15 +420,10 @@ local function processCommand(input)
             logMessage("Usage: /name [device_id] [new_name]", "error")
         end
     elseif cmd == "clear" then
-        -- Clear terminal
-        term.clear()
-        term.setCursorPos(1, 1)
-        
-        -- Reinitialize scroll window
-        app.terminal = scroll_window.create(term.current())
-        app.terminal.setMaxScrollback(500)
-        
-        logMessage("Terminal cleared", "system")
+        -- Clear message log and reset scroll window
+        app.messageLog = {}
+        redrawTerminal()
+        logMessage("Message history cleared", "system")
     elseif cmd == "status" then
         local deviceCount = 0
         local connectedCount = 0
@@ -376,7 +445,8 @@ local function processCommand(input)
         app.running = false
     elseif cmd == "ping" then
         if app.selected then
-            sendMessageToDevice(app.selected, "/ping")
+            -- Send direct ping message instead of text message (fixing the ping issue)
+            modem.sendMessage(app.selected, "ping", "ping")
             logMessage("Ping sent to " .. app.devices[app.selected].name, "system")
         else
             logMessage("No device selected. Select a device first with /select [id]", "error")
@@ -387,6 +457,141 @@ local function processCommand(input)
     end
 end
 
+-- Read user input (with history support)
+local function readInput()
+    local w, h = term.getSize()
+    term.setCursorPos(1, h)
+    term.setTextColor(COLORS.TEXT)
+    write("> ")
+    
+    -- Create a custom event loop to handle scroll keys during input
+    local input = ""
+    local pos = 1
+    local historyPos = #app.history + 1
+    
+    -- Draw the cursor
+    term.setCursorPos(1 + pos, h)
+    term.setCursorBlink(true)
+    
+    while true do
+        local event, param1, param2, param3 = os.pullEvent()
+        
+        if event == "key" then
+            if param1 == keys.enter then
+                -- Submit input
+                term.setCursorBlink(false)
+                print() -- Move to next line
+                break
+                
+            elseif param1 == keys.backspace then
+                -- Delete character
+                if pos > 1 then
+                    input = input:sub(1, pos - 2) .. input:sub(pos)
+                    pos = pos - 1
+                    term.setCursorPos(1, h)
+                    term.write("> " .. input .. " ") -- Clear any trailing character
+                    term.setCursorPos(1 + pos, h)
+                end
+                
+            elseif param1 == keys.left then
+                -- Move cursor left
+                if pos > 1 then
+                    pos = pos - 1
+                    term.setCursorPos(1 + pos, h)
+                end
+                
+            elseif param1 == keys.right then
+                -- Move cursor right
+                if pos <= #input then
+                    pos = pos + 1
+                    term.setCursorPos(1 + pos, h)
+                end
+                
+            elseif param1 == keys.up then
+                -- Previous command in history
+                if historyPos > 1 then
+                    historyPos = historyPos - 1
+                    input = app.history[historyPos]
+                    pos = #input + 1
+                    term.setCursorPos(1, h)
+                    term.write("> " .. input .. string.rep(" ", w - #input - 2))
+                    term.setCursorPos(1 + pos, h)
+                end
+                
+            elseif param1 == keys.down then
+                -- Next command in history
+                if historyPos < #app.history then
+                    historyPos = historyPos + 1
+                    input = app.history[historyPos]
+                else
+                    historyPos = #app.history + 1
+                    input = ""
+                end
+                pos = #input + 1
+                term.setCursorPos(1, h)
+                term.write("> " .. input .. string.rep(" ", w - #input - 2))
+                term.setCursorPos(1 + pos, h)
+                
+            elseif param1 == keys.home then
+                -- Move to start of input
+                pos = 1
+                term.setCursorPos(1 + pos, h)
+                
+            elseif param1 == keys["end"] then
+                -- Move to end of input
+                pos = #input + 1
+                term.setCursorPos(1 + pos, h)
+                
+            elseif param1 == keys.pageUp then
+                -- Scroll up in the window
+                term.setCursorBlink(false)
+                app.window.scroll(1)  -- Scroll one line up
+                app.window.draw()
+                term.setCursorPos(1 + pos, h)
+                term.setCursorBlink(true)
+                
+            elseif param1 == keys.pageDown then
+                -- Scroll down in the window
+                term.setCursorBlink(false)
+                app.window.scroll(-1)  -- Scroll one line down
+                app.window.draw()
+                term.setCursorPos(1 + pos, h)
+                term.setCursorBlink(true)
+            end
+            
+        elseif event == "char" then
+            -- Add character to input
+            input = input:sub(1, pos - 1) .. param1 .. input:sub(pos)
+            pos = pos + 1
+            term.setCursorPos(1, h)
+            term.write("> " .. input)
+            term.setCursorPos(1 + pos, h)
+            
+        elseif event == "term_resize" then
+            -- Terminal was resized
+            w, h = term.getSize()
+            app.window.updateSize()
+            app.window.draw()
+            
+            -- Redraw input
+            term.setCursorPos(1, h)
+            term.write("> " .. input)
+            term.setCursorPos(1 + pos, h)
+        end
+    end
+    
+    -- Add to history if not empty and not a duplicate of the last command
+    if input ~= "" and (app.historyPos == 0 or input ~= app.history[app.historyPos]) then
+        table.insert(app.history, input)
+        if #app.history > 50 then
+            table.remove(app.history, 1)
+        end
+        app.historyPos = #app.history
+    end
+    
+    return input
+end
+
 -- Initialize app
 local function initialize()
     -- Initialize modem first
@@ -394,125 +599,68 @@ local function initialize()
         error("Failed to initialize modem")
     end
     
-    -- Clear terminal
+    -- Clear terminal 
     term.clear()
     term.setCursorPos(1, 1)
     
-    -- Initialize scroll window
-    app.terminal = scroll_window.create(term.current())
-    app.terminal.setMaxScrollback(500)  -- Store 500 lines of history
+    -- Create scroll window (leave bottom line for input)
+    local w, h = term.getSize()
+    app.window = scrollWindow.create(term.current())
+    
+    -- Configure scroll window
+    app.window.setMaxScrollback(500)  -- Set maximum scrollback lines
     
     -- Send initial discovery ping
     modem.broadcastDiscovery()
     
+    -- Draw initial interface
+    redrawTerminal()
+    
     -- Add welcome messages to log
     logMessage("========================================", "title")
-    logMessage("         ComNet Hub Terminal v2.0       ", "title")
+    logMessage("         ComNet Hub Terminal v1.2       ", "title")
     logMessage("========================================", "title")
     logMessage("Hub ID: " .. modem.deviceID, "system")
     logMessage("Type /help for a list of commands", "system")
-    logMessage("Use mouse wheel to scroll message history", "system")
+    logMessage("Use PageUp/PageDown to scroll message history", "system")
     logMessage("Scanning for devices...", "system")
     
     return true
 end
 
--- Read user input with basic history support
-local function readInput()
-    -- Show input prompt at bottom
-    local w, h = term.getSize()
-    term.setCursorPos(1, h)
-    term.setBackgroundColor(colors.black)
-    term.setTextColor(colors.white)
-    term.clearLine()
-    term.write("> ")
-    
-    -- Read input with basic history
-    local input = read(nil, app.history, function(text)
-        if text:sub(1, 1) == "/" then
-            local matches = {}
-            for cmd in ("list select send scan name clear status help exit ping"):gmatch("%S+") do
-                if "/" .. cmd:sub(1, #text - 1) == text then
-                    table.insert(matches, "/" .. cmd)
-                end
-            end
-            return matches
-        end
-        return nil
-    end)
-    
-    -- Add to history if not empty
-    if input ~= "" then
-        -- Avoid duplicates
-        if #app.history == 0 or app.history[#app.history] ~= input then
-            table.insert(app.history, input)
-            if #app.history > 50 then table.remove(app.history, 1) end
-        end
-    end
-    
-    -- Clear input line
-    term.setCursorPos(1, h)
-    term.clearLine()
-    
-    return input
-end
-
 -- Main event loop
 local function mainLoop()
-    -- Network handling function
-    local function networkTask()
-        while app.running do
-            -- Check for device timeouts
-            checkDeviceTimeouts()
-            
-            -- Send periodic discovery pings
-            if os.time() - modem.lastPingTime > 30 then
-                logMessage("Broadcasting discovery ping...", "system")
-                modem.broadcastDiscovery()
+    -- Create a parallel execution environment
+    parallel.waitForAny(
+        -- UI and input handling
+        function()
+            while app.running do
+                local input = readInput()
+                if input and #input > 0 then
+                    processCommand(input)
+                end
             end
-            
-            -- Process incoming messages (with short timeout)
-            local senderId, message = rednet.receive(modem.config.PROTOCOL, 0.5)
-            if senderId and message then
-                processMessage(senderId, message)
-            end
-            
-            -- Small sleep to prevent CPU usage
-            os.sleep(0.1)
-        end
-    end
-    
-    -- Input handling function
-    local function inputTask()
-        while app.running do
-            -- Process regular input
-            local input = readInput()
-            if input and #input > 0 then
-                processCommand(input)
-            end
-            
-            -- Make sure terminal UI is up to date
-            if app.terminal then
-                app.terminal.draw(0)
+        end,
+        
+        -- Network and background tasks
+        function()
+            while app.running do
+                -- Check for device timeouts
+                checkDeviceTimeouts()
+                
+                -- Send periodic discovery pings
+                if os.time() - modem.lastPingTime > 30 then
+                    modem.broadcastDiscovery()
+                end
+                
+                -- Process incoming messages
+                local senderId, message = rednet.receive(modem.config.PROTOCOL, 1)
+                if senderId and message then
+                    processMessage(senderId, message)
+                end
             end
         end
-    end
-    
-    -- Mouse event handler for scroll wheel
-    local function mouseTask()
-        while app.running do
-            local event, button, x, y = os.pullEvent("mouse_scroll")
-            
-            -- Pass scroll events to the terminal
-            if app.terminal then
-                app.terminal.scroll(button) -- button will be 1 for up, -1 for down
-                app.terminal.draw(0)
-            end
-        end
-    end
-    
-    -- Run all tasks in parallel
-    parallel.waitForAny(networkTask, inputTask, mouseTask)
+    )
 end
 
 -- Main application entry point
