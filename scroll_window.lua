@@ -24,7 +24,10 @@ local function copy_term(from, to, get_line, cursor_offset)
     end
   end
 end
-function create(original)
+
+local scrollWindow = {}
+
+function scrollWindow.create(original)
   if not original then original = term.current() end
 
   local text = {}
@@ -470,3 +473,5 @@ function create(original)
   redirect.clear()
   return redirect
 end
+
+return scrollWindow
