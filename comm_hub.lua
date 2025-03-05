@@ -1,20 +1,19 @@
 -- comm_hub.lua
--- ComputerCraft Communication Hub with simplified GUI
+-- ComputerCraft Communication Hub with Terminal Interface
 
 -- Load the modem control module
 local modem = require("modem_control")
 
--- Color settings (simplified)
+-- Color settings
 local COLORS = {
-    BACKGROUND = colors.black,
     TEXT = colors.white,
     TITLE = colors.yellow,
-    BORDER = colors.blue,
-    SELECTED = colors.lightBlue,
     CONNECTED = colors.lime,
     DISCONNECTED = colors.red,
     MESSAGE_IN = colors.lightGray,
     MESSAGE_OUT = colors.cyan,
+    SYSTEM = colors.lightBlue,
+    ERROR = colors.red,
 }
 
 -- App state
@@ -22,32 +21,9 @@ local app = {
     running = true,
     devices = {},
     selected = nil,
-    messageInput = "",
-    width = 0,
-    height = 0,
-    lastScan = 0,
-    scanInterval = 5, -- Scan every 5 seconds
-    -- UI components
-    ui = {
-        deviceList = {
-            x = 1, y = 3,
-            width = 20, -- Slightly narrower
-            height = 0,
-            scroll = 0
-        },
-        messagePanel = {
-            x = 23, y = 3, -- Adjusted
-            width = 0,
-            height = 0,
-            scroll = 0
-        },
-        statusBar = {
-            x = 1, y = 0
-        },
-        inputBar = {
-            x = 23, y = 0 -- Adjusted
-        }
-    }
+    history = {},  -- Command history
+    historyPos = 0,
+    messageLog = {},  -- Log of all messages for display
 }
 
 -- Device management
@@ -61,6 +37,15 @@ local function addDevice(id, name, deviceType)
             connected = true,
             messages = {}
         }
+        
+        -- Log new device connection
+        logMessage("Device connected: " .. name .. " (ID: " .. id .. ")", "system")
+        
+        -- Auto-select if we have no selection
+        if not app.selected then
+            app.selected = id
+            logMessage("Auto-selected device: " .. name, "system")
+        end
     else
         -- Update existing device
         app.devices[id].lastSeen = os.time()
@@ -72,15 +57,19 @@ end
 
 local function checkDeviceTimeouts()
     for id, device in pairs(app.devices) do
-        if os.time() - device.lastSeen > modem.config.TIMEOUT then
+        if device.connected and os.time() - device.lastSeen > modem.config.TIMEOUT then
             device.connected = false
+            logMessage("Device disconnected: " .. device.name .. " (timeout)", "system")
         end
     end
 end
 
 -- Send a message and update history
 local function sendMessageToDevice(deviceId, messageText)
-    if not deviceId or not app.devices[deviceId] then return false end
+    if not deviceId or not app.devices[deviceId] then
+        logMessage("Error: No device selected or invalid device", "error")
+        return false
+    end
     
     local success = modem.sendMessage(deviceId, messageText)
     
@@ -96,7 +85,12 @@ local function sendMessageToDevice(deviceId, messageText)
             timestamp = os.time()
         })
         
+        -- Log to terminal
+        logMessage("To " .. app.devices[deviceId].name .. ": " .. messageText, "outgoing")
+        
         return true
+    else
+        logMessage("Failed to send message to " .. app.devices[deviceId].name, "error")
     end
     
     return false
@@ -128,78 +122,99 @@ local function processMessage(senderId, message)
             timestamp = os.time()
         })
         
+        -- Log incoming message
+        logMessage("From " .. app.devices[senderId].name .. ": " .. message.content, "incoming")
+        
         -- Auto-respond to pings
         if message.content == "/ping" then
             sendMessageToDevice(senderId, "/ping_response")
         end
-    end
-end
-
--- UI Drawing functions --
-
--- Text wrapping utility (simplified)
-local function wrapText(text, width)
-    local result = {}
-    local line = ""
-    
-    for word in text:gmatch("%S+") do
-        if #line + #word + 1 > width then
-            table.insert(result, line)
-            line = word
-        else
-            if #line > 0 then
-                line = line .. " " .. word
+    elseif message.type == "command_result" then
+        -- Handle command result from turtle
+        if not app.devices[senderId] then
+            addDevice(senderId)
+        end
+        
+        local result = message.content
+        if type(result) == "string" then
+            -- Try to deserialize if it's a string
+            pcall(function()
+                result = textutils.unserialize(result)
+            end)
+        end
+        
+        if type(result) == "table" then
+            local resultMsg = "Command result from " .. app.devices[senderId].name .. ": "
+            if result.success then
+                resultMsg = resultMsg .. "SUCCESS"
             else
-                line = word
+                resultMsg = resultMsg .. "FAILED"
             end
+            
+            if result.result ~= nil then
+                resultMsg = resultMsg .. " - Result: " .. tostring(result.result)
+            end
+            
+            if result.error then
+                resultMsg = resultMsg .. " - Error: " .. result.error
+            end
+            
+            logMessage(resultMsg, "system")
+        else
+            logMessage("Command result from " .. app.devices[senderId].name .. ": " .. tostring(result), "system")
         end
     end
-    
-    if #line > 0 then
-        table.insert(result, line)
-    end
-    
-    return result
 end
 
--- Draw the entire UI (simplified)
-local function drawUI()
-    term.setBackgroundColor(COLORS.BACKGROUND)
-    term.clear()
+-- Logging
+function logMessage(message, messageType)
+    -- Get current time
+    local timestamp = textutils.formatTime(os.time(), true)
     
-    -- Draw title bar
-    term.setCursorPos(1, 1)
-    term.setBackgroundColor(COLORS.BORDER)
-    term.setTextColor(COLORS.TITLE)
-    term.write(string.rep(" ", app.width))
-    term.setCursorPos(math.floor((app.width - 18) / 2), 1)
-    term.write("ComNet Hub v1.0")
-    
-    -- Draw divider
-    for y = 3, app.height - 3 do
-        term.setCursorPos(app.ui.deviceList.width + 1, y)
-        term.setBackgroundColor(COLORS.BORDER)
-        term.write(" ")
+    -- Choose color based on message type
+    local color = COLORS.TEXT
+    if messageType == "system" then
+        color = COLORS.SYSTEM
+    elseif messageType == "error" then
+        color = COLORS.ERROR
+    elseif messageType == "incoming" then
+        color = COLORS.MESSAGE_IN
+    elseif messageType == "outgoing" then
+        color = COLORS.MESSAGE_OUT
     end
     
-    -- Draw headers
-    term.setTextColor(COLORS.TEXT)
-    term.setBackgroundColor(COLORS.BORDER)
-    term.setCursorPos(2, 2)
-    term.write("Devices")
-    term.setCursorPos(app.ui.messagePanel.x, 2)
-    term.write("Messages")
+    -- Store in log
+    table.insert(app.messageLog, {
+        text = message,
+        timestamp = timestamp,
+        type = messageType,
+        color = color
+    })
     
-    -- Reset colors
-    term.setBackgroundColor(COLORS.BACKGROUND)
-    term.setTextColor(COLORS.TEXT)
+    -- Keep log size reasonable
+    if #app.messageLog > 100 then
+        table.remove(app.messageLog, 1)
+    end
     
-    -- Draw device list
-    local y = app.ui.deviceList.y
+    -- Display immediately
+    term.setTextColor(color)
+    print("[" .. timestamp .. "] " .. message)
+    term.setTextColor(COLORS.TEXT)
+end
+
+-- List all connected devices
+local function listDevices()
+    local deviceCount = 0
+    local connectedCount = 0
     local sorted = {}
     
+    -- Get sorted list of devices
     for _, device in pairs(app.devices) do
         table.insert(sorted, device)
+        deviceCount = deviceCount + 1
+        if device.connected then
+            connectedCount = connectedCount + 1
+        end
     end
     
     table.sort(sorted, function(a, b)
@@ -209,222 +224,157 @@ local function drawUI()
         return a.name < b.name
     end)
     
+    -- Print header
+    print()
+    term.setTextColor(COLORS.TITLE)
+    print("=== Connected Devices (" .. connectedCount .. "/" .. deviceCount .. ") ===")
+    term.setTextColor(COLORS.TEXT)
+    
+    -- Print each device
     for i, device in ipairs(sorted) do
-        if i > app.ui.deviceList.scroll and y <= app.ui.deviceList.y + app.ui.deviceList.height then
-            term.setCursorPos(app.ui.deviceList.x, y)
-            
-            -- Highlight selected device
-            if app.selected == device.id then
-                term.setBackgroundColor(COLORS.SELECTED)
-            else
-                term.setBackgroundColor(COLORS.BACKGROUND)
-            end
-            
-            -- Set color based on connection status
-            if device.connected then
-                term.setTextColor(COLORS.CONNECTED)
-            else
-                term.setTextColor(COLORS.DISCONNECTED)
-            end
-            
-            -- Draw device name with padding
-            local displayName = device.name
-            if #displayName > app.ui.deviceList.width - 4 then
-                displayName = displayName:sub(1, app.ui.deviceList.width - 7) .. "..."
-            end
-            term.write(string.format(" %-" .. (app.ui.deviceList.width - 2) .. "s", displayName))
-            
-            y = y + 1
-        end
-    end
-    
-    -- Draw messages
-    if app.selected and app.devices[app.selected] then
-        local device = app.devices[app.selected]
-        local messages = device.messages or {}
-        local y = app.ui.messagePanel.y + app.ui.messagePanel.height
-        
-        -- Clear message panel
-        for cy = app.ui.messagePanel.y, app.ui.messagePanel.y + app.ui.messagePanel.height do
-            term.setCursorPos(app.ui.messagePanel.x, cy)
-            term.setBackgroundColor(COLORS.BACKGROUND)
-            term.write(string.rep(" ", app.ui.messagePanel.width))
+        local prefix = "  "
+        if app.selected == device.id then
+            prefix = "> " -- Show which device is selected
         end
         
-        -- Draw last few messages
-        local count = 0
-        for i = #messages, math.max(1, #messages - 10), -1 do
-            local msg = messages[i]
-            
-            -- Set message format based on sender
-            if msg.sender == "me" then
-                term.setTextColor(COLORS.MESSAGE_OUT)
-                prefix = "> "
-            else
-                term.setTextColor(COLORS.MESSAGE_IN)
-                prefix = "< "
-            end
-            
-            local wrapped = wrapText(msg.content, app.ui.messagePanel.width - 3)
-            
-            for j = #wrapped, 1, -1 do
-                local text = wrapped[j]
-                if j == #wrapped then
-                    text = prefix .. text
-                else
-                    text = "  " .. text
-                end
-                
-                y = y - 1
-                if y >= app.ui.messagePanel.y then
-                    term.setCursorPos(app.ui.messagePanel.x, y)
-                    term.write(text)
-                end
-            end
-            
-            -- Stop if we've filled the panel
-            if y <= app.ui.messagePanel.y then
-                break
-            end
-        end
-    else
-        -- No device selected
-        term.setTextColor(COLORS.TEXT)
-        term.setCursorPos(app.ui.messagePanel.x, app.ui.messagePanel.y + 2)
-        term.write("Select a device")
-    end
-    
-    -- Draw input bar
-    term.setCursorPos(1, app.height)
-    term.setBackgroundColor(COLORS.BORDER)
-    term.setTextColor(COLORS.TEXT)
-    term.write(string.rep(" ", app.width))
-    
-    -- Draw status info
-    local deviceCount = 0
-    local connectedCount = 0
-    for _, device in pairs(app.devices) do
-        deviceCount = deviceCount + 1
         if device.connected then
-            connectedCount = connectedCount + 1
+            term.setTextColor(COLORS.CONNECTED)
+        else
+            term.setTextColor(COLORS.DISCONNECTED)
         end
+        
+        local status = device.connected and "CONNECTED" or "DISCONNECTED"
+        print(prefix .. device.name .. " (ID: " .. device.id .. ") - " .. status .. " - Type: " .. device.type)
     end
     
-    term.setCursorPos(2, app.height)
-    term.write(string.format("Connected: %d/%d | ID: %d | ESC: Exit", 
-        connectedCount, deviceCount, modem.deviceID))
-    
-    -- Draw input field
-    term.setCursorPos(app.ui.messagePanel.x, app.height - 1)
-    term.setBackgroundColor(COLORS.BACKGROUND)
     term.setTextColor(COLORS.TEXT)
-    term.write(string.rep(" ", app.ui.messagePanel.width))
+    print()
+end
+
+-- Show help information
+local function showHelp()
+    term.setTextColor(COLORS.TITLE)
+    print("\n=== ComNet Hub Command Help ===")
+    term.setTextColor(COLORS.TEXT)
+    print("Commands:")
+    print("  /list             - List all connected devices")
+    print("  /select [id]      - Select a device by ID")
+    print("  /send [id] [msg]  - Send message to specific device")
+    print("  /scan             - Scan for devices")
+    print("  /name [id] [name] - Rename a device")
+    print("  /clear            - Clear message history")
+    print("  /status           - Show connection status")
+    print("  /help             - Show this help")
+    print("  /exit             - Exit application")
+    print("\nSending Messages:")
+    print("  - Type a message and press Enter to send to selected device")
+    print("  - Start message with ! to send a command to a turtle (e.g. !forward)")
+    print("  - Use /ping to check if a device is responding")
+    print()
+end
+
+-- Process a command
+local function processCommand(input)
+    if input:sub(1, 1) ~= "/" then
+        -- Not a command, send as message to selected device
+        if app.selected then
+            sendMessageToDevice(app.selected, input)
+        else
+            logMessage("No device selected. Select a device first with /select [id]", "error")
+        end
+        return
+    end
     
-    -- Show input prompt if a device is selected
-    if app.selected and app.devices[app.selected] then
-        term.setCursorPos(app.ui.messagePanel.x, app.height - 1)
-        term.write("> " .. app.messageInput)
-        
-        -- Position cursor at end of input
-        term.setCursorPos(app.ui.messagePanel.x + 2 + #app.messageInput, app.height - 1)
-        term.setCursorBlink(true)
-    else
-        term.setCursorBlink(false)
+    -- Parse command
+    local cmd = input:match("^/(%w+)")
+    local args = {}
+    for arg in input:gmatch("%S+") do
+        if arg ~= "/" .. cmd then
+            table.insert(args, arg)
+        end
     end
-end
-
--- Handle input events
-local function handleKey(key)
-    if key == keys.up then
-        -- Navigate device list up
-        if app.ui.deviceList.scroll > 0 then
-            app.ui.deviceList.scroll = app.ui.deviceList.scroll - 1
-        end
-    elseif key == keys.down then
-        -- Navigate device list down
-        local deviceCount = 0
-        for _ in pairs(app.devices) do deviceCount = deviceCount + 1 end
-        if deviceCount > app.ui.deviceList.height and app.ui.deviceList.scroll < deviceCount - app.ui.deviceList.height then
-            app.ui.deviceList.scroll = app.ui.deviceList.scroll + 1
-        end
-    elseif key == keys.enter then
-        -- Send message
-        if app.messageInput ~= "" and app.selected then
-            -- Send message
-            sendMessageToDevice(app.selected, app.messageInput)
-            app.messageInput = ""
-        end
-    elseif key == keys.backspace then
-        -- Delete character from message
-        if #app.messageInput > 0 then
-            app.messageInput = app.messageInput:sub(1, -2)
-        end
-    elseif key == keys.tab then
-        -- Cycle through connected devices
-        local connectedDevices = {}
-        for id, device in pairs(app.devices) do
-            if device.connected then
-                table.insert(connectedDevices, id)
-            end
-        end
-        
-        table.sort(connectedDevices)
-        
-        if #connectedDevices > 0 then
-            if not app.selected then
-                app.selected = connectedDevices[1]
+    
+    -- Process command
+    if cmd == "list" then
+        listDevices()
+    elseif cmd == "select" then
+        if args[1] and tonumber(args[1]) then
+            local id = tonumber(args[1])
+            if app.devices[id] then
+                app.selected = id
+                logMessage("Selected device: " .. app.devices[id].name, "system")
             else
-                local index = nil
-                for i, id in ipairs(connectedDevices) do
-                    if id == app.selected then
-                        index = i
-                        break
-                    end
-                end
-                
-                if index then
-                    app.selected = connectedDevices[(index % #connectedDevices) + 1]
+                logMessage("No device with ID " .. id .. " found", "error")
+            end
+        else
+            logMessage("Usage: /select [device_id]", "error")
+        end
+    elseif cmd == "send" then
+        if args[1] and tonumber(args[1]) then
+            local id = tonumber(args[1])
+            if app.devices[id] then
+                local msg = table.concat(args, " ", 2)
+                if msg and #msg > 0 then
+                    sendMessageToDevice(id, msg)
                 else
-                    app.selected = connectedDevices[1]
+                    logMessage("Usage: /send [device_id] [message]", "error")
                 end
+            else
+                logMessage("No device with ID " .. id .. " found", "error")
             end
+        else
+            logMessage("Usage: /send [device_id] [message]", "error")
         end
-    elseif key == keys.f5 then
-        -- Refresh devices
+    elseif cmd == "scan" or cmd == "refresh" then
+        logMessage("Scanning for devices...", "system")
         modem.broadcastDiscovery()
-    elseif key == keys.escape then
-        -- Exit application
-        app.running = false
-    end
-end
-
-local function handleChar(char)
-    app.messageInput = app.messageInput .. char
-end
-
-local function handleClick(button, x, y)
-    -- Check if click was in the device list
-    if x >= app.ui.deviceList.x and x < app.ui.deviceList.x + app.ui.deviceList.width and
-       y >= app.ui.deviceList.y and y < app.ui.deviceList.y + app.ui.deviceList.height then
-        -- Find which device was clicked
-        local deviceIndex = y - app.ui.deviceList.y + app.ui.deviceList.scroll
-        
-        -- Get sorted list of devices
-        local sorted = {}
-        for _, device in pairs(app.devices) do
-            table.insert(sorted, device)
-        end
-        
-        table.sort(sorted, function(a, b)
-            if a.connected ~= b.connected then
-                return a.connected
+    elseif cmd == "name" then
+        if args[1] and tonumber(args[1]) and args[2] then
+            local id = tonumber(args[1])
+            local newName = table.concat(args, " ", 2)
+            if app.devices[id] then
+                local oldName = app.devices[id].name
+                app.devices[id].name = newName
+                logMessage("Renamed device " .. oldName .. " to " .. newName, "system")
+            else
+                logMessage("No device with ID " .. id .. " found", "error")
             end
-            return a.name < b.name
-        end)
-        
-        if sorted[deviceIndex] then
-            app.selected = sorted[deviceIndex].id
+        else
+            logMessage("Usage: /name [device_id] [new_name]", "error")
         end
+    elseif cmd == "clear" then
+        term.clear()
+        term.setCursorPos(1, 1)
+        logMessage("Terminal cleared", "system")
+    elseif cmd == "status" then
+        local deviceCount = 0
+        local connectedCount = 0
+        for _, device in pairs(app.devices) do
+            deviceCount = deviceCount + 1
+            if device.connected then
+                connectedCount = connectedCount + 1
+            end
+        end
+        
+        local selectedName = app.selected and app.devices[app.selected] and app.devices[app.selected].name or "None"
+        
+        logMessage("Status: " .. connectedCount .. "/" .. deviceCount .. " devices connected", "system")
+        logMessage("Selected device: " .. selectedName, "system")
+        logMessage("Hub ID: " .. modem.deviceID, "system")
+    elseif cmd == "help" then
+        showHelp()
+    elseif cmd == "exit" or cmd == "quit" then
+        app.running = false
+    elseif cmd == "ping" then
+        if app.selected then
+            sendMessageToDevice(app.selected, "/ping")
+            logMessage("Ping sent to " .. app.devices[app.selected].name, "system")
+        else
+            logMessage("No device selected. Select a device first with /select [id]", "error")
+        end
+    else
+        logMessage("Unknown command: " .. cmd, "error")
+        logMessage("Type /help for a list of commands", "system")
     end
 end
 
@@ -435,67 +385,85 @@ local function initialize()
         error("Failed to initialize modem")
     end
     
-    -- Set up UI dimensions
-    app.width, app.height = term.getSize()
-    app.ui.deviceList.height = app.height - 5
-    app.ui.messagePanel.width = app.width - app.ui.deviceList.width - 3
-    app.ui.messagePanel.height = app.height - 6
-    
     -- Send initial discovery ping
     modem.broadcastDiscovery()
-    app.lastScan = os.time()
+    
+    -- Clear terminal and show welcome message
+    term.clear()
+    term.setCursorPos(1, 1)
+    
+    term.setTextColor(COLORS.TITLE)
+    print("========================================")
+    print("         ComNet Hub Terminal v1.0       ")
+    print("========================================")
+    term.setTextColor(COLORS.TEXT)
+    print("Hub ID: " .. modem.deviceID)
+    print("Type /help for a list of commands")
+    print("Scanning for devices...")
     
     return true
 end
 
+-- Read user input (with history support)
+local function readInput()
+    term.setTextColor(COLORS.TEXT)
+    write("> ")
+    
+    local input = read(nil, app.history)
+    
+    -- Add to history if not empty and not a duplicate of the last command
+    if input ~= "" and (app.historyPos == 0 or input ~= app.history[app.historyPos]) then
+        table.insert(app.history, input)
+        if #app.history > 50 then
+            table.remove(app.history, 1)
+        end
+        app.historyPos = #app.history
+    end
+    
+    return input
+end
+
 -- Main event loop
 local function mainLoop()
-    while app.running do
-        drawUI()
+    -- Create a parallel execution environment
+    parallel.waitForAny(
+        -- UI and input handling
+        function()
+            while app.running do
+                local input = readInput()
+                if input and #input > 0 then
+                    processCommand(input)
+                end
+            end
+        end,
         
-        -- Check for device timeouts
-        checkDeviceTimeouts()
-        
-        -- Send periodic discovery pings (every 5 seconds)
-        if os.time() - app.lastScan > app.scanInterval then
-            modem.broadcastDiscovery()
-            app.lastScan = os.time()
-        end
-        
-        -- Poll for events with a short timeout
-        local event, param1, param2, param3 = os.pullEvent(0.5) -- Short timeout for responsive UI
-        
-        if event == "key" then
-            handleKey(param1)
-        elseif event == "char" then
-            handleChar(param1)
-        elseif event == "mouse_click" then
-            handleClick(param1, param2, param3)
-        elseif event == "rednet_message" then
-            local senderId, message, protocol = param1, param2, param3
-            if protocol == modem.config.PROTOCOL then
-                processMessage(senderId, message)
+        -- Network and background tasks
+        function()
+            while app.running do
+                -- Check for device timeouts
+                checkDeviceTimeouts()
+                
+                -- Send periodic discovery pings
+                if os.time() - modem.lastPingTime > 30 then
+                    modem.broadcastDiscovery()
+                end
+                
+                -- Process incoming messages
+                local senderId, message = rednet.receive(modem.config.PROTOCOL, 1)
+                if senderId and message then
+                    processMessage(senderId, message)
+                end
             end
         end
-    end
+    )
 end
 
 -- Main application entry point
 local function main()
-    term.clear()
-    term.setCursorPos(1,1)
-    
-    print("Starting ComNet Hub...")
-    
     if not initialize() then
         print("Failed to initialize the application. Exiting.")
         return
     end
-    
-    print("Ready! Starting main loop...")
-    
-    -- Small delay to show startup message
-    sleep(1)
     
     -- Run the main event loop
     mainLoop()
