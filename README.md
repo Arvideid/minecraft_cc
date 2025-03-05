@@ -22,14 +22,14 @@ This system consists of three main components:
 
 1. On your central computer:
    - Download the three required files:
-     - `wget https://raw.githubusercontent.com/yourusername/minecraft_cc/main/modem_control.lua`
-     - `wget https://raw.githubusercontent.com/yourusername/minecraft_cc/main/comm_hub.lua`
+     - `wget https://raw.githubusercontent.com/Arvideid/minecraft_cc/main/modem_control.lua`
+     - `wget https://raw.githubusercontent.com/Arvideid/minecraft_cc/main/comm_hub.lua`
    - Run the hub program: `comm_hub`
 
 2. On each turtle:
    - Download the required files:
-     - `wget https://raw.githubusercontent.com/yourusername/minecraft_cc/main/modem_control.lua`
-     - `wget https://raw.githubusercontent.com/yourusername/minecraft_cc/main/comm_turtle.lua`
+     - `wget https://raw.githubusercontent.com/Arvideid/minecraft_cc/main/modem_control.lua`
+     - `wget https://raw.githubusercontent.com/Arvideid/minecraft_cc/main/comm_turtle.lua`
    - Run the turtle program: `comm_turtle`
 
 ## Using the Communication Hub
