@@ -25,6 +25,9 @@ local state = {
     commandQueue = {},    -- Queue of commands to execute
     hubID = nil,          -- Current hub ID
     lastPing = 0,         -- Last ping time
+    lastScan = 0,         -- Last scan time
+    scanInterval = 5,     -- Scan every 5 seconds until connected
+    connectedScanInterval = 30, -- Scan every 30 seconds when connected
     position = {          -- Current position (if tracking enabled)
         x = 0, y = 0, z = 0,
         facing = 0,       -- 0=north, 1=east, 2=south, 3=west
@@ -332,8 +335,42 @@ local function initialize()
     
     -- Announce our presence
     modem.broadcastDiscovery()
+    state.lastScan = os.time()
     
     return true
+end
+
+-- Update status display
+local function updateDisplay()
+    -- Position cursor at a fixed position to update status
+    term.setCursorPos(1, 6)
+    term.clearLine()
+    
+    if state.hubID then
+        term.setTextColor(colors.lime)
+        term.write("Connected to hub #" .. state.hubID)
+    else
+        term.setTextColor(colors.orange)
+        term.write("Searching for hub...")
+    end
+    
+    -- Show last command if there was one
+    if state.lastCommand.name then
+        term.setCursorPos(1, 7)
+        term.clearLine()
+        term.setTextColor(colors.white)
+        local status = state.lastCommand.success and "Success" or "Failed"
+        term.write("Last: " .. state.lastCommand.name .. " - " .. status)
+    end
+    
+    -- Show fuel level
+    term.setCursorPos(1, 8)
+    term.clearLine()
+    term.setTextColor(colors.white)
+    term.write("Fuel: " .. turtle.getFuelLevel())
+    
+    -- Reset colors
+    term.setTextColor(colors.white)
 end
 
 -- Main event loop
@@ -345,26 +382,35 @@ local function mainLoop()
             executeCommand(cmd.cmd, cmd.args)
         end
         
-        -- Send periodic ping to hub
+        -- Send periodic ping to hub if connected
         if state.hubID and os.time() - state.lastPing > 15 then
             modem.sendMessage(state.hubID, "ping", "ping")
             state.lastPing = os.time()
         end
         
-        -- Broadcast discovery occasionally if not connected
-        if not state.hubID and os.time() - modem.lastPingTime > 30 then
+        -- Broadcast discovery more frequently if not connected
+        local currentTime = os.time()
+        local scanInterval = state.hubID and state.connectedScanInterval or state.scanInterval
+        
+        if currentTime - state.lastScan > scanInterval then
             modem.broadcastDiscovery()
+            state.lastScan = currentTime
+            
+            -- Update display
+            updateDisplay()
         end
         
-        -- Listen for events
-        local event = {os.pullEvent()}
+        -- Listen for events with a short timeout
+        local event, param1, param2, param3 = os.pullEvent(0.5) -- Short timeout for responsive UI
         
-        if event[1] == "rednet_message" then
-            local senderId, message, protocol = event[2], event[3], event[4]
+        if event == "rednet_message" then
+            local senderId, message, protocol = param1, param2, param3
             if protocol == modem.config.PROTOCOL then
                 processMessage(senderId, message)
+                -- Update display after processing a message
+                updateDisplay()
             end
-        elseif event[1] == "key" and event[2] == keys.q and event[3] then
+        elseif event == "key" and param1 == keys.q and param3 then
             -- Allow termination with Ctrl+Q
             print("Terminating ComNet Turtle...")
             state.running = false

@@ -1,10 +1,10 @@
 -- comm_hub.lua
--- ComputerCraft Communication Hub with GUI
+-- ComputerCraft Communication Hub with simplified GUI
 
 -- Load the modem control module
 local modem = require("modem_control")
 
--- Color settings
+-- Color settings (simplified)
 local COLORS = {
     BACKGROUND = colors.black,
     TEXT = colors.white,
@@ -15,29 +15,28 @@ local COLORS = {
     DISCONNECTED = colors.red,
     MESSAGE_IN = colors.lightGray,
     MESSAGE_OUT = colors.cyan,
-    BUTTON = colors.gray,
-    BUTTON_TEXT = colors.white,
 }
 
 -- App state
 local app = {
     running = true,
-    mode = "main", -- main, help
     devices = {},
     selected = nil,
     messageInput = "",
     width = 0,
     height = 0,
+    lastScan = 0,
+    scanInterval = 5, -- Scan every 5 seconds
     -- UI components
     ui = {
         deviceList = {
             x = 1, y = 3,
-            width = 24,
+            width = 20, -- Slightly narrower
             height = 0,
             scroll = 0
         },
         messagePanel = {
-            x = 27, y = 3,
+            x = 23, y = 3, -- Adjusted
             width = 0,
             height = 0,
             scroll = 0
@@ -46,7 +45,7 @@ local app = {
             x = 1, y = 0
         },
         inputBar = {
-            x = 27, y = 0
+            x = 23, y = 0 -- Adjusted
         }
     }
 }
@@ -138,7 +137,7 @@ end
 
 -- UI Drawing functions --
 
--- Text wrapping utility
+-- Text wrapping utility (simplified)
 local function wrapText(text, width)
     local result = {}
     local line = ""
@@ -163,10 +162,9 @@ local function wrapText(text, width)
     return result
 end
 
--- Draw window borders and layout
-local function drawBorder()
+-- Draw the entire UI (simplified)
+local function drawUI()
     term.setBackgroundColor(COLORS.BACKGROUND)
-    term.setTextColor(COLORS.BORDER)
     term.clear()
     
     -- Draw title bar
@@ -177,44 +175,29 @@ local function drawBorder()
     term.setCursorPos(math.floor((app.width - 18) / 2), 1)
     term.write("ComNet Hub v1.0")
     
-    -- Draw divider between device list and messages
+    -- Draw divider
     for y = 3, app.height - 3 do
         term.setCursorPos(app.ui.deviceList.width + 1, y)
         term.setBackgroundColor(COLORS.BORDER)
         term.write(" ")
     end
     
-    -- Draw status bar
-    term.setCursorPos(1, app.ui.statusBar.y)
-    term.setBackgroundColor(COLORS.BORDER)
-    term.setTextColor(COLORS.TEXT)
-    term.write(string.rep(" ", app.width))
-    
-    -- Draw input bar divider
-    term.setCursorPos(1, app.ui.inputBar.y)
-    term.setBackgroundColor(COLORS.BORDER)
-    term.write(string.rep(" ", app.width))
-    
     -- Draw headers
     term.setTextColor(COLORS.TEXT)
     term.setBackgroundColor(COLORS.BORDER)
     term.setCursorPos(2, 2)
-    term.write("Connected Devices")
+    term.write("Devices")
     term.setCursorPos(app.ui.messagePanel.x, 2)
     term.write("Messages")
     
     -- Reset colors
     term.setBackgroundColor(COLORS.BACKGROUND)
     term.setTextColor(COLORS.TEXT)
-end
-
--- Draw the list of devices
-local function drawDeviceList()
+    
+    -- Draw device list
     local y = app.ui.deviceList.y
-    local count = 0
     local sorted = {}
     
-    -- Sort devices by connection status and name
     for _, device in pairs(app.devices) do
         table.insert(sorted, device)
     end
@@ -226,10 +209,8 @@ local function drawDeviceList()
         return a.name < b.name
     end)
     
-    -- Draw each device
     for i, device in ipairs(sorted) do
-        count = count + 1
-        if count > app.ui.deviceList.scroll and y <= app.ui.deviceList.y + app.ui.deviceList.height then
+        if i > app.ui.deviceList.scroll and y <= app.ui.deviceList.y + app.ui.deviceList.height then
             term.setCursorPos(app.ui.deviceList.x, y)
             
             -- Highlight selected device
@@ -257,116 +238,69 @@ local function drawDeviceList()
         end
     end
     
-    -- Fill remaining space
-    term.setBackgroundColor(COLORS.BACKGROUND)
-    while y <= app.ui.deviceList.y + app.ui.deviceList.height do
-        term.setCursorPos(app.ui.deviceList.x, y)
-        term.write(string.rep(" ", app.ui.deviceList.width))
-        y = y + 1
-    end
-end
-
--- Draw message history
-local function drawMessagePanel()
-    if not app.selected or not app.devices[app.selected] then
-        -- No device selected, show instructions
-        term.setBackgroundColor(COLORS.BACKGROUND)
-        term.setTextColor(COLORS.TEXT)
-        term.setCursorPos(app.ui.messagePanel.x, app.ui.messagePanel.y + 2)
-        term.write("Select a device to")
-        term.setCursorPos(app.ui.messagePanel.x, app.ui.messagePanel.y + 3)
-        term.write("view and send messages.")
-        return
-    end
-    
-    local device = app.devices[app.selected]
-    local messages = device.messages or {}
-    local y = app.ui.messagePanel.y + app.ui.messagePanel.height
-    
-    -- Clear message panel
-    for cy = app.ui.messagePanel.y, app.ui.messagePanel.y + app.ui.messagePanel.height do
-        term.setCursorPos(app.ui.messagePanel.x, cy)
-        term.setBackgroundColor(COLORS.BACKGROUND)
-        term.write(string.rep(" ", app.ui.messagePanel.width))
-    end
-    
-    -- Draw messages from bottom to top
-    local count = 0
-    for i = #messages, 1, -1 do
-        local msg = messages[i]
-        local lines = {}
-        local prefix = ""
+    -- Draw messages
+    if app.selected and app.devices[app.selected] then
+        local device = app.devices[app.selected]
+        local messages = device.messages or {}
+        local y = app.ui.messagePanel.y + app.ui.messagePanel.height
         
-        -- Set message format based on sender
-        if msg.sender == "me" then
-            term.setTextColor(COLORS.MESSAGE_OUT)
-            prefix = "> "
-        else
-            term.setTextColor(COLORS.MESSAGE_IN)
-            prefix = "< "
+        -- Clear message panel
+        for cy = app.ui.messagePanel.y, app.ui.messagePanel.y + app.ui.messagePanel.height do
+            term.setCursorPos(app.ui.messagePanel.x, cy)
+            term.setBackgroundColor(COLORS.BACKGROUND)
+            term.write(string.rep(" ", app.ui.messagePanel.width))
         end
         
-        -- Word wrap the message
-        local wrapped = wrapText(msg.content, app.ui.messagePanel.width - #prefix - 1)
-        
-        -- Add each line
-        for j = #wrapped, 1, -1 do
-            local text = wrapped[j]
-            if j == #wrapped then
-                text = prefix .. text
+        -- Draw last few messages
+        local count = 0
+        for i = #messages, math.max(1, #messages - 10), -1 do
+            local msg = messages[i]
+            
+            -- Set message format based on sender
+            if msg.sender == "me" then
+                term.setTextColor(COLORS.MESSAGE_OUT)
+                prefix = "> "
             else
-                text = "  " .. text
+                term.setTextColor(COLORS.MESSAGE_IN)
+                prefix = "< "
             end
             
-            count = count + 1
-            if count > app.ui.messagePanel.scroll then
+            local wrapped = wrapText(msg.content, app.ui.messagePanel.width - 3)
+            
+            for j = #wrapped, 1, -1 do
+                local text = wrapped[j]
+                if j == #wrapped then
+                    text = prefix .. text
+                else
+                    text = "  " .. text
+                end
+                
                 y = y - 1
                 if y >= app.ui.messagePanel.y then
                     term.setCursorPos(app.ui.messagePanel.x, y)
-                    term.setBackgroundColor(COLORS.BACKGROUND)
                     term.write(text)
                 end
             end
+            
+            -- Stop if we've filled the panel
+            if y <= app.ui.messagePanel.y then
+                break
+            end
         end
-        
-        -- Add timestamp if we have space
-        if y > app.ui.messagePanel.y then
-            local timestamp = textutils.formatTime(msg.timestamp, true)
-            y = y - 1
-            term.setCursorPos(app.ui.messagePanel.x, y)
-            term.setTextColor(colors.gray)
-            term.write(timestamp)
-        end
-        
-        -- Stop if we've filled the panel
-        if y <= app.ui.messagePanel.y then
-            break
-        end
+    else
+        -- No device selected
+        term.setTextColor(COLORS.TEXT)
+        term.setCursorPos(app.ui.messagePanel.x, app.ui.messagePanel.y + 2)
+        term.write("Select a device")
     end
-end
-
--- Draw input field
-local function drawInputBar()
-    term.setCursorPos(app.ui.messagePanel.x, app.ui.inputBar.y + 1)
-    term.setBackgroundColor(COLORS.BACKGROUND)
-    term.setTextColor(COLORS.TEXT)
     
-    -- Clear input area
-    term.write(string.rep(" ", app.ui.messagePanel.width))
-    
-    -- Show input prompt if a device is selected
-    if app.selected and app.devices[app.selected] then
-        term.setCursorPos(app.ui.messagePanel.x, app.ui.inputBar.y + 1)
-        term.write("> " .. app.messageInput)
-    end
-end
-
--- Draw status bar
-local function drawStatusBar()
-    term.setCursorPos(app.ui.statusBar.x, app.ui.statusBar.y)
+    -- Draw input bar
+    term.setCursorPos(1, app.height)
     term.setBackgroundColor(COLORS.BORDER)
     term.setTextColor(COLORS.TEXT)
+    term.write(string.rep(" ", app.width))
     
+    -- Draw status info
     local deviceCount = 0
     local connectedCount = 0
     for _, device in pairs(app.devices) do
@@ -376,83 +310,31 @@ local function drawStatusBar()
         end
     end
     
-    local status = string.format("Devices: %d connected, %d total | Hub ID: %d", 
-        connectedCount, deviceCount, modem.deviceID)
+    term.setCursorPos(2, app.height)
+    term.write(string.format("Connected: %d/%d | ID: %d | ESC: Exit", 
+        connectedCount, deviceCount, modem.deviceID))
     
-    -- Add help text
-    local help = "ENTER: Send | F1: Help | F5: Refresh | ESC: Exit"
-    local padding = app.width - #status - #help
-    
-    if padding > 0 then
-        term.write(status .. string.rep(" ", padding) .. help)
-    else
-        term.write(status)
-    end
-end
-
--- Draw help screen
-local function drawHelpScreen()
+    -- Draw input field
+    term.setCursorPos(app.ui.messagePanel.x, app.height - 1)
     term.setBackgroundColor(COLORS.BACKGROUND)
-    term.clear()
-    
-    term.setTextColor(COLORS.TITLE)
-    term.setCursorPos(1, 1)
-    term.write(string.rep("=", app.width))
-    term.setCursorPos(math.floor((app.width - 12) / 2), 1)
-    term.write(" HELP SCREEN ")
-    term.setCursorPos(1, 2)
-    term.write(string.rep("=", app.width))
-    
     term.setTextColor(COLORS.TEXT)
-    local help = {
-        "",
-        "KEYBOARD SHORTCUTS:",
-        "  Arrow Up/Down - Navigate device list",
-        "  Enter - Send message to selected device",
-        "  F1 - Show/hide this help screen",
-        "  F5 - Refresh device list (send discovery ping)",
-        "  ESC - Exit application",
-        "",
-        "DEVICE STATUSES:",
-        "  " .. string.char(7) .. " Green - Device is currently connected",
-        "  " .. string.char(7) .. " Red - Device has timed out or disconnected",
-        "",
-        "COMMANDS:",
-        "  /name [new name] - Rename the selected device locally",
-        "  /clear - Clear message history with selected device",
-        "  /ping - Send ping to selected device",
-        "  !command - Send command to turtle (e.g. !forward, !turnLeft)",
-        "",
-        "Press any key to return..."
-    }
+    term.write(string.rep(" ", app.ui.messagePanel.width))
     
-    for i, line in ipairs(help) do
-        term.setCursorPos(3, i + 3)
-        term.write(line)
+    -- Show input prompt if a device is selected
+    if app.selected and app.devices[app.selected] then
+        term.setCursorPos(app.ui.messagePanel.x, app.height - 1)
+        term.write("> " .. app.messageInput)
+        
+        -- Position cursor at end of input
+        term.setCursorPos(app.ui.messagePanel.x + 2 + #app.messageInput, app.height - 1)
+        term.setCursorBlink(true)
+    else
+        term.setCursorBlink(false)
     end
-end
-
--- Update the UI
-local function updateUI()
-    if app.mode == "help" then
-        drawHelpScreen()
-        return
-    end
-    
-    drawBorder()
-    drawDeviceList()
-    drawMessagePanel()
-    drawInputBar()
-    drawStatusBar()
 end
 
 -- Handle input events
-local function handleKeyEvent(key, held)
-    if app.mode == "help" then
-        app.mode = "main"
-        return true
-    end
-    
+local function handleKey(key)
     if key == keys.up then
         -- Navigate device list up
         if app.ui.deviceList.scroll > 0 then
@@ -465,48 +347,11 @@ local function handleKeyEvent(key, held)
         if deviceCount > app.ui.deviceList.height and app.ui.deviceList.scroll < deviceCount - app.ui.deviceList.height then
             app.ui.deviceList.scroll = app.ui.deviceList.scroll + 1
         end
-    elseif key == keys.f1 then
-        -- Show help screen
-        app.mode = "help"
-    elseif key == keys.f5 then
-        -- Refresh devices
-        modem.broadcastDiscovery()
     elseif key == keys.enter then
         -- Send message
         if app.messageInput ~= "" and app.selected then
-            -- Check for commands
-            if app.messageInput:sub(1,1) == "/" then
-                local cmd = app.messageInput:match("^/(%w+)")
-                local arg = app.messageInput:match("^/%w+ (.+)$")
-                
-                if cmd == "name" and arg then
-                    -- Rename device
-                    if app.devices[app.selected] then
-                        app.devices[app.selected].name = arg
-                    end
-                elseif cmd == "clear" then
-                    -- Clear messages
-                    if app.devices[app.selected] then
-                        app.devices[app.selected].messages = {}
-                    end
-                elseif cmd == "ping" then
-                    -- Ping device
-                    sendMessageToDevice(app.selected, "/ping")
-                else
-                    -- Unknown command
-                    if app.devices[app.selected] then
-                        table.insert(app.devices[app.selected].messages, {
-                            content = "Unknown command: " .. cmd,
-                            sender = "system",
-                            timestamp = os.time()
-                        })
-                    end
-                end
-            else
-                -- Send regular message
-                sendMessageToDevice(app.selected, app.messageInput)
-            end
-            
+            -- Send message
+            sendMessageToDevice(app.selected, app.messageInput)
             app.messageInput = ""
         end
     elseif key == keys.backspace then
@@ -544,27 +389,20 @@ local function handleKeyEvent(key, held)
                 end
             end
         end
+    elseif key == keys.f5 then
+        -- Refresh devices
+        modem.broadcastDiscovery()
     elseif key == keys.escape then
         -- Exit application
         app.running = false
     end
-    
-    return true
 end
 
-local function handleCharEvent(char)
-    if app.mode == "main" then
-        app.messageInput = app.messageInput .. char
-    end
-    return true
+local function handleChar(char)
+    app.messageInput = app.messageInput .. char
 end
 
-local function handleMouseEvent(button, x, y)
-    if app.mode == "help" then
-        app.mode = "main"
-        return true
-    end
-    
+local function handleClick(button, x, y)
     -- Check if click was in the device list
     if x >= app.ui.deviceList.x and x < app.ui.deviceList.x + app.ui.deviceList.width and
        y >= app.ui.deviceList.y and y < app.ui.deviceList.y + app.ui.deviceList.height then
@@ -588,8 +426,6 @@ local function handleMouseEvent(button, x, y)
             app.selected = sorted[deviceIndex].id
         end
     end
-    
-    return true
 end
 
 -- Initialize app
@@ -601,14 +437,13 @@ local function initialize()
     
     -- Set up UI dimensions
     app.width, app.height = term.getSize()
-    app.ui.deviceList.height = app.height - 6
+    app.ui.deviceList.height = app.height - 5
     app.ui.messagePanel.width = app.width - app.ui.deviceList.width - 3
-    app.ui.messagePanel.height = app.height - 8
-    app.ui.statusBar.y = app.height - 2
-    app.ui.inputBar.y = app.height - 3
+    app.ui.messagePanel.height = app.height - 6
     
     -- Send initial discovery ping
     modem.broadcastDiscovery()
+    app.lastScan = os.time()
     
     return true
 end
@@ -616,27 +451,28 @@ end
 -- Main event loop
 local function mainLoop()
     while app.running do
-        updateUI()
+        drawUI()
         
         -- Check for device timeouts
         checkDeviceTimeouts()
         
-        -- Send periodic discovery pings
-        if os.time() - modem.lastPingTime > 30 then
+        -- Send periodic discovery pings (every 5 seconds)
+        if os.time() - app.lastScan > app.scanInterval then
             modem.broadcastDiscovery()
+            app.lastScan = os.time()
         end
         
         -- Poll for events with a short timeout
-        local event = {os.pullEvent()}
+        local event, param1, param2, param3 = os.pullEvent(0.5) -- Short timeout for responsive UI
         
-        if event[1] == "key" then
-            handleKeyEvent(event[2], event[3])
-        elseif event[1] == "char" then
-            handleCharEvent(event[2])
-        elseif event[1] == "mouse_click" then
-            handleMouseEvent(event[2], event[3], event[4])
-        elseif event[1] == "rednet_message" then
-            local senderId, message, protocol = event[2], event[3], event[4]
+        if event == "key" then
+            handleKey(param1)
+        elseif event == "char" then
+            handleChar(param1)
+        elseif event == "mouse_click" then
+            handleClick(param1, param2, param3)
+        elseif event == "rednet_message" then
+            local senderId, message, protocol = param1, param2, param3
             if protocol == modem.config.PROTOCOL then
                 processMessage(senderId, message)
             end
@@ -656,7 +492,7 @@ local function main()
         return
     end
     
-    print("Initialization complete. Starting main loop...")
+    print("Ready! Starting main loop...")
     
     -- Small delay to show startup message
     sleep(1)
