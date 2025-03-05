@@ -3,8 +3,6 @@
 
 -- Load the modem control module
 local modem = require("modem_control")
--- Load the scroll window module
-local scrollWindow = require("scroll_window")
 
 -- Color settings
 local COLORS = {
@@ -16,7 +14,6 @@ local COLORS = {
     MESSAGE_OUT = colors.cyan,
     SYSTEM = colors.lightBlue,
     ERROR = colors.red,
-    SCROLL_MARKER = colors.gray,
 }
 
 -- App state
@@ -27,12 +24,7 @@ local app = {
     history = {},  -- Command history
     historyPos = 0,
     messageLog = {},  -- Log of all messages for display
-    window = nil,    -- Scroll window instance
-    isScrolling = false, -- Whether we're in scrollback mode
 }
-
--- Forward declarations
-local redrawTerminal, logMessage, resetScroll
 
 -- Device management
 local function addDevice(id, name, deviceType)
@@ -113,9 +105,23 @@ local function processMessage(senderId, message)
         modem.respondToDiscovery(senderId)
         -- Add device to list
         addDevice(senderId, message.name, message.device_type)
+        
+        -- If it's a turtle, automatically send a connect request
+        if message.device_type == "turtle" then
+            -- Send connect request to establish a proper connection
+            logMessage("Sending connect request to turtle: " .. message.name, "system")
+            modem.sendMessage(senderId, "Please connect", "connect_request")
+        end
     elseif message.type == "discovery_response" then
         -- Add responding device
         addDevice(senderId, message.name, message.device_type)
+        
+        -- If it's a turtle, automatically send a connect request
+        if message.device_type == "turtle" then
+            -- Send connect request to establish a proper connection
+            logMessage("Sending connect request to turtle: " .. message.name, "system")
+            modem.sendMessage(senderId, "Please connect", "connect_request")
+        end
     elseif message.type == "message" then
         -- Add to conversation
         addDevice(senderId)
@@ -137,22 +143,6 @@ local function processMessage(senderId, message)
         if message.content == "/ping" then
             sendMessageToDevice(senderId, "/ping_response")
         end
-    elseif message.type == "ping" then
-        -- Handle explicit ping type (fixing the ping issue)
-        if not app.devices[senderId] then
-            addDevice(senderId)
-        end
-        app.devices[senderId].lastSeen = os.time()
-        -- Send ping response
-        modem.sendMessage(senderId, "pong", "ping_response")
-        logMessage("Ping received from " .. app.devices[senderId].name, "system")
-    elseif message.type == "ping_response" then
-        -- Handle ping response
-        if not app.devices[senderId] then
-            addDevice(senderId)
-        end
-        app.devices[senderId].lastSeen = os.time()
-        logMessage("Ping response from " .. app.devices[senderId].name, "system")
     elseif message.type == "command_result" then
         -- Handle command result from turtle
         if not app.devices[senderId] then
@@ -190,43 +180,11 @@ local function processMessage(senderId, message)
     end
 end
 
--- Terminal display functions using the scroll window
-function redrawTerminal()
-    app.window.clear()
-    
-    -- Draw title
-    app.window.setCursorPos(1, 1)
-    app.window.setTextColour(COLORS.TITLE)
-    app.window.write("ComNet Hub Terminal v1.2 - Connected to " .. #app.devices .. " devices")
-    
-    -- Draw status line
-    local selectedName = app.selected and app.devices[app.selected] and app.devices[app.selected].name or "None"
-    app.window.setCursorPos(1, 2)
-    app.window.setTextColour(COLORS.SYSTEM)
-    app.window.write("Selected: " .. selectedName .. " | Type /help for commands")
-    
-    -- Draw separator
-    app.window.setCursorPos(1, 3)
-    app.window.setTextColour(COLORS.SCROLL_MARKER)
-    local w, _ = term.getSize()
-    app.window.write(string.rep("-", w))
-    
-    -- Reset cursor for input
-    app.window.setCursorPos(1, 4)
-    app.window.setTextColour(COLORS.TEXT)
-    
-    -- Draw the window to screen
-    app.window.draw()
-    
-    -- Draw input prompt on bottom line
-    local _, h = term.getSize()
-    term.setCursorPos(1, h)
-    term.setTextColour(COLORS.TEXT)
-    write("> ")
-end
-
--- Log a message to the scroll window
+-- Logging
 function logMessage(message, messageType)
+    -- Get current time
+    local timestamp = textutils.formatTime(os.time(), true)
+    
     -- Choose color based on message type
     local color = COLORS.TEXT
     if messageType == "system" then
@@ -237,15 +195,9 @@ function logMessage(message, messageType)
         color = COLORS.MESSAGE_IN
     elseif messageType == "outgoing" then
         color = COLORS.MESSAGE_OUT
-    elseif messageType == "title" then
-        color = COLORS.TITLE
     end
     
-    -- Format timestamp
-    local timestamp = textutils.formatTime(os.time(), true)
-    local formattedMessage = "[" .. timestamp .. "] " .. message
-    
-    -- Store in message log for history
+    -- Store in log
     table.insert(app.messageLog, {
         text = message,
         timestamp = timestamp,
@@ -254,24 +206,14 @@ function logMessage(message, messageType)
     })
     
     -- Keep log size reasonable
-    if #app.messageLog > 500 then
+    if #app.messageLog > 100 then
         table.remove(app.messageLog, 1)
     end
     
-    -- Write to scroll window
-    app.window.setTextColour(color)
-    app.window.setCursorPos(1, app.window.getCursorPos())
-    app.window.write(formattedMessage)
-    app.window.write("\n")
-    
-    -- Draw the window
-    app.window.draw()
-    
-    -- Draw input prompt on bottom line
-    local _, h = term.getSize()
-    term.setCursorPos(1, h)
-    term.setTextColour(COLORS.TEXT)
-    write("> ")
+    -- Display immediately
+    term.setTextColor(color)
+    print("[" .. timestamp .. "] " .. message)
+    term.setTextColor(COLORS.TEXT)
 end
 
 -- List all connected devices
@@ -296,8 +238,11 @@ local function listDevices()
         return a.name < b.name
     end)
     
-    -- Log to message history
-    logMessage("=== Connected Devices (" .. connectedCount .. "/" .. deviceCount .. ") ===", "system")
+    -- Print header
+    print()
+    term.setTextColor(COLORS.TITLE)
+    print("=== Connected Devices (" .. connectedCount .. "/" .. deviceCount .. ") ===")
+    term.setTextColor(COLORS.TEXT)
     
     -- Print each device
     for i, device in ipairs(sorted) do
@@ -306,48 +251,41 @@ local function listDevices()
             prefix = "> " -- Show which device is selected
         end
         
-        local status = device.connected and "CONNECTED" or "DISCONNECTED"
-        local deviceType = device.type and (" - Type: " .. device.type) or ""
-        
         if device.connected then
-            logMessage(prefix .. device.name .. " (ID: " .. device.id .. ") - " .. status .. deviceType, "system")
+            term.setTextColor(COLORS.CONNECTED)
         else
-            logMessage(prefix .. device.name .. " (ID: " .. device.id .. ") - " .. status .. deviceType, "error")
+            term.setTextColor(COLORS.DISCONNECTED)
         end
+        
+        local status = device.connected and "CONNECTED" or "DISCONNECTED"
+        print(prefix .. device.name .. " (ID: " .. device.id .. ") - " .. status .. " - Type: " .. device.type)
     end
+    
+    term.setTextColor(COLORS.TEXT)
+    print()
 end
 
 -- Show help information
 local function showHelp()
-    local helpMessages = {
-        "=== ComNet Hub Command Help ===",
-        "Commands:",
-        "  /list             - List all connected devices",
-        "  /select [id]      - Select a device by ID",
-        "  /send [id] [msg]  - Send message to specific device",
-        "  /scan             - Scan for devices",
-        "  /name [id] [name] - Rename a device",
-        "  /clear            - Clear message history",
-        "  /status           - Show connection status",
-        "  /help             - Show this help",
-        "  /exit             - Exit application",
-        "",
-        "Scrolling:",
-        "  PageUp/PageDown   - Scroll through message history",
-        "  Up/Down           - Scroll line by line in scrollback mode",
-        "  Home/End          - Jump to start/end of message history",
-        "  ESC               - Exit scrollback mode and return to bottom",
-        "",
-        "Sending Messages:",
-        "  - Type a message and press Enter to send to selected device",
-        "  - Start message with ! to send a command to a turtle (e.g. !forward)",
-        "  - Use /ping to check if a device is responding"
-    }
-    
-    -- Log each help line
-    for _, msg in ipairs(helpMessages) do
-        logMessage(msg, "system")
-    end
+    term.setTextColor(COLORS.TITLE)
+    print("\n=== ComNet Hub Command Help ===")
+    term.setTextColor(COLORS.TEXT)
+    print("Commands:")
+    print("  /list             - List all connected devices")
+    print("  /select [id]      - Select a device by ID")
+    print("  /send [id] [msg]  - Send message to specific device")
+    print("  /scan             - Scan for devices")
+    print("  /name [id] [name] - Rename a device")
+    print("  /clear            - Clear message history")
+    print("  /status           - Show connection status")
+    print("  /help             - Show this help")
+    print("  /exit             - Exit application")
+    print("  /connect [id]     - Connect to a device (especially useful for turtles)")
+    print("\nSending Messages:")
+    print("  - Type a message and press Enter to send to selected device")
+    print("  - Start message with ! to send a command to a turtle (e.g. !forward)")
+    print("  - Use /ping to check if a device is responding")
+    print()
 end
 
 -- Process a command
@@ -420,10 +358,9 @@ local function processCommand(input)
             logMessage("Usage: /name [device_id] [new_name]", "error")
         end
     elseif cmd == "clear" then
-        -- Clear message log and reset scroll window
-        app.messageLog = {}
-        redrawTerminal()
-        logMessage("Message history cleared", "system")
+        term.clear()
+        term.setCursorPos(1, 1)
+        logMessage("Terminal cleared", "system")
     elseif cmd == "status" then
         local deviceCount = 0
         local connectedCount = 0
@@ -443,10 +380,35 @@ local function processCommand(input)
         showHelp()
     elseif cmd == "exit" or cmd == "quit" then
         app.running = false
+    elseif cmd == "connect" then
+        -- Connect to a device (especially useful for turtles)
+        if args[1] and tonumber(args[1]) then
+            local id = tonumber(args[1])
+            if app.devices[id] then
+                modem.sendConnectRequest(id)
+                app.selected = id
+                logMessage("Connection request sent to " .. app.devices[id].name, "system")
+            else
+                logMessage("No device with ID " .. id .. " found", "error")
+            end
+        elseif app.selected then
+            -- Use currently selected device if no ID provided
+            modem.sendConnectRequest(app.selected)
+            logMessage("Connection request sent to " .. app.devices[app.selected].name, "system")
+        else
+            logMessage("Usage: /connect [device_id]", "error")
+        end
     elseif cmd == "ping" then
         if app.selected then
-            -- Send direct ping message instead of text message (fixing the ping issue)
-            modem.sendMessage(app.selected, "ping", "ping")
+            -- If it's a turtle, first make sure we have a connection
+            if app.devices[app.selected] and app.devices[app.selected].type == "turtle" then
+                -- First send a connect request to ensure the turtle has us as its hub
+                modem.sendConnectRequest(app.selected)
+                logMessage("Sent connection request to " .. app.devices[app.selected].name, "system")
+                sleep(0.5) -- Small delay to allow processing
+            end
+            
+            sendMessageToDevice(app.selected, "/ping")
             logMessage("Ping sent to " .. app.devices[app.selected].name, "system")
         else
             logMessage("No device selected. Select a device first with /select [id]", "error")
@@ -457,128 +419,38 @@ local function processCommand(input)
     end
 end
 
+-- Initialize app
+local function initialize()
+    -- Initialize modem first
+    if not modem.init() then
+        error("Failed to initialize modem")
+    end
+    
+    -- Send initial discovery ping
+    modem.broadcastDiscovery()
+    
+    -- Clear terminal and show welcome message
+    term.clear()
+    term.setCursorPos(1, 1)
+    
+    term.setTextColor(COLORS.TITLE)
+    print("========================================")
+    print("         ComNet Hub Terminal v1.0       ")
+    print("========================================")
+    term.setTextColor(COLORS.TEXT)
+    print("Hub ID: " .. modem.deviceID)
+    print("Type /help for a list of commands")
+    print("Scanning for devices...")
+    
+    return true
+end
+
 -- Read user input (with history support)
 local function readInput()
-    local w, h = term.getSize()
-    term.setCursorPos(1, h)
     term.setTextColor(COLORS.TEXT)
     write("> ")
     
-    -- Create a custom event loop to handle scroll keys during input
-    local input = ""
-    local pos = 1
-    local historyPos = #app.history + 1
-    
-    -- Draw the cursor
-    term.setCursorPos(1 + pos, h)
-    term.setCursorBlink(true)
-    
-    while true do
-        local event, param1, param2, param3 = os.pullEvent()
-        
-        if event == "key" then
-            if param1 == keys.enter then
-                -- Submit input
-                term.setCursorBlink(false)
-                print() -- Move to next line
-                break
-                
-            elseif param1 == keys.backspace then
-                -- Delete character
-                if pos > 1 then
-                    input = input:sub(1, pos - 2) .. input:sub(pos)
-                    pos = pos - 1
-                    term.setCursorPos(1, h)
-                    term.write("> " .. input .. " ") -- Clear any trailing character
-                    term.setCursorPos(1 + pos, h)
-                end
-                
-            elseif param1 == keys.left then
-                -- Move cursor left
-                if pos > 1 then
-                    pos = pos - 1
-                    term.setCursorPos(1 + pos, h)
-                end
-                
-            elseif param1 == keys.right then
-                -- Move cursor right
-                if pos <= #input then
-                    pos = pos + 1
-                    term.setCursorPos(1 + pos, h)
-                end
-                
-            elseif param1 == keys.up then
-                -- Previous command in history
-                if historyPos > 1 then
-                    historyPos = historyPos - 1
-                    input = app.history[historyPos]
-                    pos = #input + 1
-                    term.setCursorPos(1, h)
-                    term.write("> " .. input .. string.rep(" ", w - #input - 2))
-                    term.setCursorPos(1 + pos, h)
-                end
-                
-            elseif param1 == keys.down then
-                -- Next command in history
-                if historyPos < #app.history then
-                    historyPos = historyPos + 1
-                    input = app.history[historyPos]
-                else
-                    historyPos = #app.history + 1
-                    input = ""
-                end
-                pos = #input + 1
-                term.setCursorPos(1, h)
-                term.write("> " .. input .. string.rep(" ", w - #input - 2))
-                term.setCursorPos(1 + pos, h)
-                
-            elseif param1 == keys.home then
-                -- Move to start of input
-                pos = 1
-                term.setCursorPos(1 + pos, h)
-                
-            elseif param1 == keys["end"] then
-                -- Move to end of input
-                pos = #input + 1
-                term.setCursorPos(1 + pos, h)
-                
-            elseif param1 == keys.pageUp then
-                -- Scroll up in the window
-                term.setCursorBlink(false)
-                app.window.scroll(1)  -- Scroll one line up
-                app.window.draw()
-                term.setCursorPos(1 + pos, h)
-                term.setCursorBlink(true)
-                
-            elseif param1 == keys.pageDown then
-                -- Scroll down in the window
-                term.setCursorBlink(false)
-                app.window.scroll(-1)  -- Scroll one line down
-                app.window.draw()
-                term.setCursorPos(1 + pos, h)
-                term.setCursorBlink(true)
-            end
-            
-        elseif event == "char" then
-            -- Add character to input
-            input = input:sub(1, pos - 1) .. param1 .. input:sub(pos)
-            pos = pos + 1
-            term.setCursorPos(1, h)
-            term.write("> " .. input)
-            term.setCursorPos(1 + pos, h)
-            
-        elseif event == "term_resize" then
-            -- Terminal was resized
-            w, h = term.getSize()
-            app.window.updateSize()
-            app.window.draw()
-            
-            -- Redraw input
-            term.setCursorPos(1, h)
-            term.write("> " .. input)
-            term.setCursorPos(1 + pos, h)
-        end
-    end
+    local input = read(nil, app.history)
     
     -- Add to history if not empty and not a duplicate of the last command
     if input ~= "" and (app.historyPos == 0 or input ~= app.history[app.historyPos]) then
@@ -590,42 +462,6 @@ local function readInput()
     end
     
     return input
-end
-
--- Initialize app
-local function initialize()
-    -- Initialize modem first
-    if not modem.init() then
-        error("Failed to initialize modem")
-    end
-    
-    -- Clear terminal 
-    term.clear()
-    term.setCursorPos(1, 1)
-    
-    -- Create scroll window (leave bottom line for input)
-    local w, h = term.getSize()
-    app.window = scrollWindow.create(term.current())
-    
-    -- Configure scroll window
-    app.window.setMaxScrollback(500)  -- Set maximum scrollback lines
-    
-    -- Send initial discovery ping
-    modem.broadcastDiscovery()
-    
-    -- Draw initial interface
-    redrawTerminal()
-    
-    -- Add welcome messages to log
-    logMessage("========================================", "title")
-    logMessage("         ComNet Hub Terminal v1.2       ", "title")
-    logMessage("========================================", "title")
-    logMessage("Hub ID: " .. modem.deviceID, "system")
-    logMessage("Type /help for a list of commands", "system")
-    logMessage("Use PageUp/PageDown to scroll message history", "system")
-    logMessage("Scanning for devices...", "system")
-    
-    return true
 end
 
 -- Main event loop

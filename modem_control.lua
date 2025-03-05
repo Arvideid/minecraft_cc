@@ -80,6 +80,11 @@ function modemControl.sendMessage(targetID, messageContent, messageType)
     }, modemControl.config.PROTOCOL)
 end
 
+-- Send a connect request to a device
+function modemControl.sendConnectRequest(targetID)
+    return modemControl.sendMessage(targetID, "Connection request from " .. modemControl.deviceName, "connect_request")
+end
+
 -- Wait for and receive a message, with optional timeout
 function modemControl.receiveMessage(timeout)
     local senderID, message, protocol = rednet.receive(modemControl.config.PROTOCOL, timeout)

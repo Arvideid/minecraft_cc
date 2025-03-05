@@ -255,41 +255,10 @@ function processMessage(senderId, message)
         if state.hubID == senderId then
             state.lastPing = os.time()
         end
-    elseif message.type == "ping" then
-        -- Handle explicit ping message (fixing the ping issue)
-        -- Update hub if this is from our hub or make this the hub
-        state.lastPing = os.time()
-        if not state.hubID then
-            state.hubID = senderId
-            term.setTextColor(colors.lime)
-            print("Connected to hub #" .. senderId .. " (via ping)")
-            term.setTextColor(colors.white)
-        end
-        
-        -- Send ping response back
-        modem.sendMessage(senderId, "pong", "ping_response")
-        
-        -- Show ping received
-        term.setTextColor(colors.lightBlue)
-        print("Ping received from Hub #" .. senderId)
-        term.setTextColor(colors.white)
-    elseif message.type == "ping_response" then
-        -- Handle ping response
-        state.lastPing = os.time()
-        
-        -- Show ping response
-        term.setTextColor(colors.lightBlue)
-        print("Ping response from Hub #" .. senderId)
-        term.setTextColor(colors.white)
     elseif message.type == "message" then
         -- Handle text message
         if message.content == "/ping" then
-            modem.sendMessage(senderId, "/ping_response", "message")
-            
-            -- Show ping received
-            term.setTextColor(colors.lightBlue)
-            print("Text ping received from Hub #" .. senderId)
-            term.setTextColor(colors.white)
+            modem.sendMessage(senderId, "/ping_response")
         elseif message.content:sub(1, 1) == "!" then
             -- Execute command prefixed with !
             local commandStr = message.content:sub(2)
@@ -352,7 +321,7 @@ local function initialize()
     term.clear()
     term.setCursorPos(1, 1)
     term.setTextColor(colors.yellow)
-    print("ComNet Turtle v1.1")
+    print("ComNet Turtle v1.0")
     print("----------------")
     term.setTextColor(colors.white)
     print("Computer ID: " .. modem.deviceID)
