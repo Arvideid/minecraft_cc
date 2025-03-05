@@ -1,14 +1,16 @@
 # ComputerCraft Communication System
 
-A communication system for ComputerCraft that allows computers and turtles to communicate via wireless modems.
+A modular communication system for ComputerCraft computers and turtles. This system allows for robust wireless communication between computers and turtles with a simple, reliable architecture.
 
 ## System Components
 
-This system consists of two main components:
+This system consists of three main components:
 
-1. **CommCentral (`comm_central.lua`)** - The central hub that runs on a computer with a wireless modem. It provides a GUI for monitoring and communicating with connected devices.
+1. **Modem Control Module (`modem_control.lua`)** - The core communication library that handles all wireless interactions.
 
-2. **CommTurtle (`comm_turtle.lua`)** - The client that runs on turtles with wireless modems. It allows them to connect to the central hub and receive commands.
+2. **Communication Hub (`comm_hub.lua`)** - The central hub that runs on a computer with a wireless modem. It provides a GUI for monitoring and communicating with connected devices.
+
+3. **Turtle Client (`comm_turtle.lua`)** - The client that runs on turtles with wireless modems. It allows them to connect to the central hub and receive commands.
 
 ## Requirements
 
@@ -19,17 +21,21 @@ This system consists of two main components:
 ## Installation
 
 1. On your central computer:
-   - Download the `comm_central.lua` file: `wget https://raw.githubusercontent.com/yourusername/minecraft_cc/main/comm_central.lua`
-   - Run the program with: `comm_central`
+   - Download the three required files:
+     - `wget https://raw.githubusercontent.com/yourusername/minecraft_cc/main/modem_control.lua`
+     - `wget https://raw.githubusercontent.com/yourusername/minecraft_cc/main/comm_hub.lua`
+   - Run the hub program: `comm_hub`
 
 2. On each turtle:
-   - Download the `comm_turtle.lua` file: `wget https://raw.githubusercontent.com/yourusername/minecraft_cc/main/comm_turtle.lua`
-   - Run the program with: `comm_turtle`
+   - Download the required files:
+     - `wget https://raw.githubusercontent.com/yourusername/minecraft_cc/main/modem_control.lua`
+     - `wget https://raw.githubusercontent.com/yourusername/minecraft_cc/main/comm_turtle.lua`
+   - Run the turtle program: `comm_turtle`
 
-## Using CommCentral (The Hub)
+## Using the Communication Hub
 
 ### Main Interface
-The CommCentral interface is divided into two main sections:
+The hub interface is divided into two main sections:
 - Left panel: List of connected devices (turtles and computers)
 - Right panel: Message history with the selected device
 
@@ -47,13 +53,13 @@ You can send these special commands to devices:
 - `/clear`: Clear message history with selected device
 - `/ping`: Send ping to selected device
 
-## Using CommTurtle
+## Using ComNet Turtle
 
 ### Connecting to a Hub
-The turtle will automatically connect to any CommCentral hub that discovers it. It will display the connection status on its screen.
+The turtle will automatically connect to any hub that discovers it. It will display the connection status on its screen.
 
 ### Sending Commands to Turtles
-From the CommCentral hub, you can send commands to a turtle by prefixing them with an exclamation mark (`!`). For example:
+From the hub, you can send commands to a turtle by prefixing them with an exclamation mark (`!`). For example:
 - `!forward`: Move the turtle forward
 - `!turnLeft`: Turn the turtle left
 - `!dig`: Dig the block in front
@@ -72,6 +78,19 @@ The turtle can track its position relative to its starting point:
 - `!enableTracking`: Enable position tracking
 - `!disableTracking`: Disable position tracking
 
+## Why This System Works
+This communication system has been designed with several key principles:
+
+1. **Modular Design**: By separating the modem control logic into its own module, we avoid function definition order issues.
+
+2. **Error Handling**: The system includes robust error handling throughout.
+
+3. **Consistent Protocol**: All messages follow a standard format for improved reliability.
+
+4. **Automatic Discovery**: Devices automatically find each other without manual configuration.
+
+5. **Graceful Reconnection**: If connections are lost, they are automatically restored when possible.
+
 ## Tips for Use
 
 1. **Range**: Wireless modems have a limited range (by default 64 blocks). Make sure your turtles stay within range of the hub.
@@ -80,9 +99,9 @@ The turtle can track its position relative to its starting point:
 
 3. **Multiple Hubs**: A turtle can connect to multiple hubs, but will prioritize the most recent connection.
 
-4. **Automatic Reconnection**: If a turtle loses connection, it will automatically try to reconnect when it comes back into range.
+4. **Command Queuing**: Commands sent to a turtle are queued and executed in sequence, even if they arrive rapidly.
 
-5. **Batch Commands**: To execute multiple commands in sequence, send them one after another; they will be queued on the turtle.
+5. **Press Ctrl+Q**: To exit the turtle program, press Ctrl+Q. For the hub, use ESC.
 
 ## Troubleshooting
 
@@ -98,7 +117,7 @@ The turtle can track its position relative to its starting point:
 
 You can expand this system by:
 
-1. Adding more commands to the turtle
+1. Adding more commands to the turtle client
 2. Creating specialized turtles for different tasks
 3. Implementing a security system with passwords
 4. Building a turtle management dashboard for multiple turtles

@@ -1,107 +1,63 @@
--- CommTurtle - Communication module for turtles
--- Connects to CommCentral hub and allows remote control
+-- comm_turtle.lua
+-- Turtle client for ComputerCraft communication system
 
--- Constants and configuration
-local CONFIG = {
-    PROTOCOL = "COMMCENTRAL",  -- protocol name for communications
-    PING_INTERVAL = 15,  -- seconds between pings to keep connection alive
-    CHANNELS = {
-        BROADCAST = 65535,  -- channel for broadcast messages
-        DISCOVERY = 64000,  -- channel for device discovery
-    },
-    COMMANDS = {
-        -- Movement commands
-        "forward", "back", "up", "down", "turnLeft", "turnRight",
-        -- Tool commands
-        "dig", "digUp", "digDown", "place", "placeUp", "placeDown",
-        -- Inventory commands
-        "select", "getItemCount", "getItemDetail", "transferTo",
-        -- Information commands
-        "detect", "detectUp", "detectDown", "inspect", "inspectUp", "inspectDown",
-        -- Other commands
-        "getFuelLevel", "refuel", "status", "help"
-    },
-    MAX_RETRIES = 3
+-- Load the modem control module
+local modem = require("modem_control")
+
+-- Available commands
+local COMMANDS = {
+    -- Movement commands
+    "forward", "back", "up", "down", "turnLeft", "turnRight",
+    -- Tool commands
+    "dig", "digUp", "digDown", "place", "placeUp", "placeDown",
+    -- Inventory commands
+    "select", "getItemCount", "getItemDetail", "transferTo",
+    -- Information commands
+    "detect", "detectUp", "detectDown", "inspect", "inspectUp", "inspectDown",
+    -- Other commands
+    "getFuelLevel", "refuel", "status", "help"
 }
 
--- Application state
+-- Turtle state
 local state = {
-    modem = nil,             -- modem peripheral
-    hubId = nil,             -- computer ID of connected hub
-    busy = false,            -- turtle busy executing command
-    running = true,          -- application running flag
-    lastPing = 0,            -- last time we pinged the hub
-    commandQueue = {},       -- queue of commands to execute
-    position = {             -- current position (if tracking enabled)
+    running = true,       -- Program running
+    busy = false,         -- Currently executing command
+    commandQueue = {},    -- Queue of commands to execute
+    hubID = nil,          -- Current hub ID
+    lastPing = 0,         -- Last ping time
+    position = {          -- Current position (if tracking enabled)
         x = 0, y = 0, z = 0,
+        facing = 0,       -- 0=north, 1=east, 2=south, 3=west
         tracking = false
     },
-    inventory = {},          -- current inventory state
-    lastCommand = {          -- last command executed
+    lastCommand = {       -- Last command executed
         name = nil,
         result = nil,
         error = nil
-    }
+    },
+    inventory = {}        -- Current inventory
 }
 
--- Initialize the application
-local function initialize()
-    -- Find modem
-    local modems = {peripheral.find("modem", function(name, modem) return modem.isWireless() end)}
-    if #modems == 0 then
-        error("No wireless modem found. Please attach a wireless modem.")
+-- Function declarations
+local scanInventory, sendCommandResult, sendStatusUpdate, executeCommand, processMessage
+
+-- Scan inventory and return a table of slots
+function scanInventory()
+    local inventory = {}
+    local currentSlot = turtle.getSelectedSlot()
+    
+    for i = 1, 16 do
+        turtle.select(i)
+        inventory[i] = turtle.getItemDetail() or {name = "empty", count = 0}
     end
-    state.modem = modems[1]
     
-    -- Open channels
-    state.modem.open(CONFIG.CHANNELS.BROADCAST)
-    state.modem.open(CONFIG.CHANNELS.DISCOVERY)
-    
-    -- Start rednet
-    local modemSide = peripheral.getName(state.modem)
-    rednet.open(modemSide)
-    
-    -- Display initial information
-    term.clear()
-    term.setCursorPos(1, 1)
-    term.setTextColor(colors.yellow)
-    print("CommTurtle v1.0")
-    print("----------------")
-    term.setTextColor(colors.white)
-    print("Computer ID: " .. os.getComputerID())
-    print("Awaiting connection from hub...")
-    
-    -- Send initial announcement
-    announcePresence()
+    turtle.select(currentSlot)
+    return inventory
 end
 
--- Communication functions
-local function announcePresence()
-    rednet.broadcast({
-        type = "discovery_response",
-        sender = os.getComputerID(),
-        name = os.getComputerLabel() or "Turtle-" .. os.getComputerID(),
-        computer_type = "turtle",
-        protocol = CONFIG.PROTOCOL,
-    }, CONFIG.PROTOCOL)
-end
-
-local function sendMessage(targetId, message, messageType)
-    if not targetId then return false end
-    
-    local payload = {
-        type = messageType or "message",
-        sender = os.getComputerID(),
-        content = message,
-        protocol = CONFIG.PROTOCOL,
-        timestamp = os.time()
-    }
-    
-    return rednet.send(targetId, payload, CONFIG.PROTOCOL)
-end
-
-local function sendCommandResult(command, success, result, errorMessage)
-    if not state.hubId then return false end
+-- Send command result to hub
+function sendCommandResult(command, success, result, errorMessage)
+    if not state.hubID then return false end
     
     local resultMessage = {
         command = command,
@@ -110,26 +66,27 @@ local function sendCommandResult(command, success, result, errorMessage)
         error = errorMessage
     }
     
-    return sendMessage(state.hubId, textutils.serialize(resultMessage), "command_result")
+    return modem.sendMessage(state.hubID, textutils.serialize(resultMessage), "command_result")
 end
 
-local function sendStatusUpdate()
-    if not state.hubId then return false end
+-- Send status update to hub
+function sendStatusUpdate()
+    if not state.hubID then return false end
     
     -- Get current status information
     local status = {
         fuel = turtle.getFuelLevel(),
         position = state.position,
-        inventory = scanInventory(),
+        inventory = state.inventory,
         busy = state.busy,
         lastCommand = state.lastCommand
     }
     
-    return sendMessage(state.hubId, textutils.serialize(status), "status_update")
+    return modem.sendMessage(state.hubID, textutils.serialize(status), "status_update")
 end
 
--- Command execution
-local function executeCommand(command, args)
+-- Execute a turtle command
+function executeCommand(command, args)
     if state.busy then
         return false, "Turtle is busy"
     end
@@ -208,7 +165,7 @@ local function executeCommand(command, args)
         result = turtle.getItemDetail(slot)
         success = true
     elseif command == "transferTo" then
-        if args and args[1] and tonumber(args[1]) and tonumber(args[2]) then
+        if args and args[1] and tonumber(args[1]) and args[2] and tonumber(args[2]) then
             success = turtle.transferTo(tonumber(args[1]), tonumber(args[2]))
         else
             success = false
@@ -245,7 +202,7 @@ local function executeCommand(command, args)
         sendStatusUpdate()
     elseif command == "help" then
         success = true
-        result = "Available commands: " .. table.concat(CONFIG.COMMANDS, ", ")
+        result = "Available commands: " .. table.concat(COMMANDS, ", ")
     elseif command == "setPosition" then
         -- Custom command to set position
         if args and #args >= 3 then
@@ -287,37 +244,21 @@ local function executeCommand(command, args)
     return success, result, errorMsg
 end
 
--- Utility functions
-local function scanInventory()
-    local inventory = {}
-    local currentSlot = turtle.getSelectedSlot()
+-- Process incoming messages
+function processMessage(senderId, message)
+    if not message or not message.type then return end
     
-    for i = 1, 16 do
-        turtle.select(i)
-        inventory[i] = turtle.getItemDetail() or {name = "empty", count = 0}
-    end
-    
-    turtle.select(currentSlot)
-    return inventory
-end
-
-local function processMessage(senderId, message, protocol)
-    if type(message) ~= "table" or message.protocol ~= CONFIG.PROTOCOL then
-        return
-    end
-    
-    -- Handle different message types
     if message.type == "discovery_ping" then
         -- Respond to discovery ping
-        announcePresence()
+        modem.respondToDiscovery(senderId)
         -- Update hub if this is from our hub
-        if state.hubId == senderId then
+        if state.hubID == senderId then
             state.lastPing = os.time()
         end
     elseif message.type == "message" then
         -- Handle text message
         if message.content == "/ping" then
-            sendMessage(senderId, "/ping_response")
+            modem.sendMessage(senderId, "/ping_response")
         elseif message.content:sub(1, 1) == "!" then
             -- Execute command prefixed with !
             local commandStr = message.content:sub(2)
@@ -339,16 +280,16 @@ local function processMessage(senderId, message, protocol)
         -- Update terminal with message
         term.setTextColor(colors.lightBlue)
         local sender = "Hub #" .. senderId
-        if state.hubId == senderId then sender = "Connected Hub" end
+        if state.hubID == senderId then sender = "Connected Hub" end
         print(sender .. ": " .. message.content)
         term.setTextColor(colors.white)
     elseif message.type == "connect_request" then
         -- Hub wants to connect to this turtle
-        state.hubId = senderId
+        state.hubID = senderId
         state.lastPing = os.time()
         
         -- Send acknowledgment and status
-        sendMessage(senderId, "Connection accepted", "connect_response")
+        modem.sendMessage(senderId, "Connection accepted", "connect_response")
         sendStatusUpdate()
         
         -- Update terminal
@@ -357,9 +298,9 @@ local function processMessage(senderId, message, protocol)
         term.setTextColor(colors.white)
     elseif message.type == "disconnect_request" then
         -- Hub wants to disconnect
-        if state.hubId == senderId then
-            state.hubId = nil
-            sendMessage(senderId, "Disconnected", "connect_response")
+        if state.hubID == senderId then
+            state.hubID = nil
+            modem.sendMessage(senderId, "Disconnected", "connect_response")
             
             -- Update terminal
             term.setTextColor(colors.red)
@@ -369,8 +310,34 @@ local function processMessage(senderId, message, protocol)
     end
 end
 
+-- Initialize application
+local function initialize()
+    -- Initialize modem first
+    if not modem.init() then
+        error("Failed to initialize modem")
+    end
+    
+    -- Draw startup screen
+    term.clear()
+    term.setCursorPos(1, 1)
+    term.setTextColor(colors.yellow)
+    print("ComNet Turtle v1.0")
+    print("----------------")
+    term.setTextColor(colors.white)
+    print("Computer ID: " .. modem.deviceID)
+    print("Awaiting connection from hub...")
+    
+    -- Initial inventory scan
+    state.inventory = scanInventory()
+    
+    -- Announce our presence
+    modem.broadcastDiscovery()
+    
+    return true
+end
+
 -- Main event loop
-local function eventLoop()
+local function mainLoop()
     while state.running do
         -- Process command queue
         if #state.commandQueue > 0 and not state.busy then
@@ -379,42 +346,49 @@ local function eventLoop()
         end
         
         -- Send periodic ping to hub
-        if state.hubId and os.time() - state.lastPing > CONFIG.PING_INTERVAL then
-            sendMessage(state.hubId, "ping", "ping")
+        if state.hubID and os.time() - state.lastPing > 15 then
+            modem.sendMessage(state.hubID, "ping", "ping")
             state.lastPing = os.time()
         end
         
-        -- Listen for events
-        local timeout = 1
-        if #state.commandQueue > 0 and not state.busy then
-            timeout = 0.05  -- Shorter timeout if we have commands to process
+        -- Broadcast discovery occasionally if not connected
+        if not state.hubID and os.time() - modem.lastPingTime > 30 then
+            modem.broadcastDiscovery()
         end
         
+        -- Listen for events
         local event = {os.pullEvent()}
         
         if event[1] == "rednet_message" then
             local senderId, message, protocol = event[2], event[3], event[4]
-            processMessage(senderId, message, protocol)
+            if protocol == modem.config.PROTOCOL then
+                processMessage(senderId, message)
+            end
         elseif event[1] == "key" and event[2] == keys.q and event[3] then
             -- Allow termination with Ctrl+Q
-            print("Terminating CommTurtle...")
+            print("Terminating ComNet Turtle...")
             state.running = false
         end
     end
 end
 
--- Application startup
+-- Main application entry point
 local function main()
-    -- Initialize application
-    initialize()
+    if not initialize() then
+        print("Failed to initialize the application. Exiting.")
+        return
+    end
     
-    -- Run event loop
-    eventLoop()
+    -- Run the main event loop
+    mainLoop()
     
     -- Cleanup
     term.setTextColor(colors.white)
     term.setCursorPos(1, term.getCursorPos())
-    print("CommTurtle terminated.")
+    print("ComNet Turtle terminated.")
+    
+    -- Close modem connections
+    modem.close()
 end
 
 -- Start the application
